@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 
 #Meine Importe
-from numba import njit
+from numba import njit, prange
 
 # ----------------------------------------------------------------------------
 # D2Q9 lattice constants
@@ -61,7 +61,7 @@ SIZES = {
 # ----------------------------------------------------------------------------
 # Core kernels — naive on purpose
 # ----------------------------------------------------------------------------
-@njit
+@njit(parallel=True)
 def equilibrium(rho, ux, uy):
     """Equilibrium distribution for every cell.
 
@@ -69,11 +69,14 @@ def equilibrium(rho, ux, uy):
 
     Naive: a Python loop over the 9 directions, each allocating temporaries.
     """
-    usqr = 1.5 * (ux * ux + uy * uy)
+    nx, ny = rho.shape
     feq = np.empty((Q,) + rho.shape, dtype=np.float64)
-    for i in range(Q):
-        cu = 3.0 * (C[i, 0] * ux + C[i, 1] * uy)
-        feq[i] = W[i] * rho * (1.0 + cu + 0.5 * cu * cu - usqr)
+    for x in prange(nx):
+        for y in range(ny):
+            usqr = 1.5 * (ux[x, y] * ux[x, y] + uy[x, y] * uy[x, y])
+            for i in range(Q):
+                cu = 3.0 * (C[i, 0] * ux[x, y] + C[i, 1] * uy[x, y])
+                feq[i, x, y] = W[i] * rho[x, y] * (1.0 + cu + 0.5 * cu * cu - usqr)
     return feq
 
 
