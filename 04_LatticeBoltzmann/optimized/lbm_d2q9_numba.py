@@ -173,7 +173,8 @@ def run(case="cylinder", nx=400, ny=100, nsteps=2000, reynolds=200.0,
         ux = ux * (1.0 + 1e-4 * np.sin(np.linspace(0, 2 * np.pi, ny))[None, :])
     ux[solid] = 0.0
     uy[solid] = 0.0
-    f = equilibrium(rho, ux, uy)
+    f = equilibrium(rho, ux, uy) #Gratis Warmup das schon war
+    _ = macroscopic(f) #Gratis Warmup den ich aufrufe um die funktion einmal zu kompilieren und die JIT compilation zu triggern
 
     samples = []
     t_start = time.perf_counter()
