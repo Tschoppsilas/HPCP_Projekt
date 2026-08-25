@@ -80,17 +80,28 @@ def equilibrium(rho, ux, uy):
     return feq
 
 
+@njit(parallel=True)
 def macroscopic(f):
     """Density and velocity as moments of f. Fresh arrays on every call."""
-    rho = np.zeros(f.shape[1:], dtype=np.float64)
-    ux = np.zeros(f.shape[1:], dtype=np.float64)
-    uy = np.zeros(f.shape[1:], dtype=np.float64)
-    for i in range(Q):
-        rho += f[i]
-        ux += C[i, 0] * f[i]
-        uy += C[i, 1] * f[i]
-    ux /= rho
-    uy /= rho
+    _, nx, ny = f.shape # _ => Q, welches ich hier nicht mehr brauche da unten bei den f.shape[1:] das Q auch ignoriert wurde
+    rho = np.zeros((nx, ny), dtype=np.float64)
+    ux = np.zeros((nx, ny), dtype=np.float64)
+    uy = np.zeros((nx, ny), dtype=np.float64)
+
+    for x in prange(nx):
+        for y in range(ny):
+            rho_c, ux_c, uy_c = 0.0, 0.0, 0.0 #Leere Variablen für die Berechnung der Dichte und Geschwindigkeit
+
+            for i in range(Q):
+                rho_c += f[i, x, y]
+                ux_c += C[i, 0] * f[i, x, y]
+                uy_c += C[i, 1] * f[i, x, y]
+
+            ux_c /= rho_c
+            uy_c /= rho_c
+            rho[x, y] = rho_c #reultate der Berechnung in die Arrays schreiben
+            ux[x, y] = ux_c
+            uy[x, y] = uy_c
     return rho, ux, uy
 
 
