@@ -147,13 +147,53 @@ Geschichte zu erzählen. Das bestätigt aber nochmal den bereits im Projekt-Read
 Grundsatz: finale Zahlen gehören auf `pub030` gemessen, nicht auf dem Laptop -- Consumer-Hardware
 verhält sich bei Thread-Parallelismus unvorhersehbarer als ein dedizierter Server-Knoten.
 
-### Schritt 3 — (als Nächstes) volle Kernel-Fusion
+### Schritt 3 — `macroscopic()` zu Scalar-Loop + `prange`
 
-Plan: `macroscopic()`, die Bounce-back-Schleife und `stream()` ebenfalls zu Scalar-Loops
-umbauen, und alles (Macroscopic + Randbedingungen + Kollision + Bounce-back + Streaming) zu
-einem einzigen `@njit(parallel=True)`-Kernel pro Zeitschritt fusionieren, statt mehrere separat
-parallelisierte Funktionen pro Schritt aufzurufen. Ziel: nur noch ein Parallelisierungs-Overhead
-pro Zeitschritt statt mehrerer kleiner.
+Gleiches Muster wie bei `equilibrium()`: `_, nx, ny = f.shape`, dann `for x in prange(nx): for
+y in range(ny):` mit lokalen Skalaren `rho_c, ux_c, uy_c` (eigene Namen, nicht `rho`/`ux`/`uy` --
+das war ein Zwischenfehler: erst wurden die Output-Arrays mit denselben Namen wie die
+Zellen-Summen überschrieben, wodurch am Ende nur noch Einzelzahlen statt Arrays zurückgegeben
+wurden). Division und Zurückschreiben ins Array (`rho[x, y] = rho_c` usw.) korrekt innerhalb der
+x/y-Loops platziert.
+
+**Mess-Bug gefunden und korrigiert:** `macroscopic()` wird im Gegensatz zu `equilibrium()` zum
+ersten Mal *innerhalb* der Zeitschritt-Schleife aufgerufen (`rho, ux, uy = macroscopic(f)` ist
+die erste Zeile in `for step in range(nsteps):`), also nach `t_start = time.perf_counter()`.
+Ohne einen expliziten Warm-up-Aufruf davor wurde die JIT-Kompilierzeit von `macroscopic()` beim
+ersten Schleifendurchlauf mitgemessen und hat die Zahlen verfälscht. Fix: `_ = macroscopic(f)`
+direkt nach der bestehenden `equilibrium()`-Initialisierung eingefügt, noch vor `t_start`.
+
+Ergebnisse vor und nach diesem Fix, zur Dokumentation (zeigt, wie stark ein Mess-Fehler die
+Interpretation verfälschen kann):
+
+| Maschine | Baseline | Nur equilibrium (Schritt 2) | macroscopic dazu, **ohne** Warm-up-Fix | macroscopic dazu, **mit** Warm-up-Fix |
+|----------|----------|------------------------------|------------------------------------------|-------------------------------------------|
+| Laptop   | 10.45 s  | 7.57 s (1.38x)               | 5.97 s (1.75x)                            | 7.73 s (Ausreisser, Rauschen) / **5.69 s (1.84x)** bei Wiederholung |
+| Cluster  | 5.58 s   | 3.80 s (1.47x)               | 4.49 s (1.24x, wirkte wie Rückschritt!)   | **3.83 s (1.46x)**, praktisch gleich wie Schritt 2 |
+
+**Wichtige Korrektur gegenüber der letzten Interpretation:** Die zuvor beobachtete "Verschlechterung"
+auf dem Cluster (3.80 s -> 4.49 s) war grösstenteils ein Mess-Artefakt (mitgemessene
+Kompilierzeit), nicht ein echter Effekt von zusätzlichem Parallelisierungs-Overhead pro
+Funktionsaufruf. Nach der Korrektur ist `macroscopic()` auf dem Cluster ungefähr **neutral**
+(3.83 s vs. 3.80 s) -- weder deutlicher Gewinn noch Verlust. Auf dem Laptop hilft es weiterhin
+klar (bester bisheriger Speedup: 1.84x). Die "Overhead akkumuliert pro zusätzlicher parallelisierter
+Funktion"-Hypothese von vorhin wird damit nicht bestätigt -- zumindest nicht durch dieses
+Beispiel. Lehre fürs Write-up: ein unerwartetes Ergebnis zuerst auf Mess-Fehler prüfen (Warm-up!),
+bevor eine inhaltliche Erklärung dafür gesucht wird.
+
+Korrektheit: weiterhin `OK` auf beiden Maschinen.
+
+### Schritt 4 — (als Nächstes) `stream()` + Bounce-back, dann volle Kernel-Fusion
+
+Plan: `stream()` (Streaming-Schritt, aktuell doppeltes `np.roll` in ein frisches Array) und die
+Bounce-back-Schleife aus dem `run()`-Körper ebenfalls zu Scalar-Loops umbauen -- inklusive
+Warm-up-Aufruf vor `t_start`, diesmal von Anfang an mitgedacht. Am Ende, falls Zeit reicht: alles
+(Macroscopic + Randbedingungen + Kollision + Bounce-back + Streaming) zu einem einzigen
+`@njit(parallel=True)`-Kernel pro Zeitschritt fusionieren, statt mehrere separate Funktionen pro
+Schritt aufzurufen -- auch wenn Schritt 3 zeigt, dass der Overhead mehrerer separater Aufrufe
+kleiner sein könnte als zuerst gedacht, bleibt die Fusion sinnvoll: weniger Speicherverkehr
+zwischen den Schritten (keine Zwischen-Arrays wie `feq`, `fpost` mehr nötig), was näher am
+eigentlichen Ziel (Bandbreite sparen) liegt als die Overhead-Frage allein.
 
 (Rest ausfüllen, sobald erledigt)
 
@@ -165,7 +205,7 @@ Kernel weiter ist, für die finale Write-up-Tabelle)
 ## 6. Korrektheit
 
 - `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für Schritt 1 (bit-identisch, 0.000e+00 max
-  rel err) und Schritt 2 (weiterhin OK trotz geänderter Loop-Reihenfolge).
+  rel err), Schritt 2 und Schritt 3 (weiterhin OK trotz geänderter Loop-Reihenfolge).
 
 ## 7. Reflexion
 

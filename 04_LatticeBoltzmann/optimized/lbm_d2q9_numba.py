@@ -105,15 +105,23 @@ def macroscopic(f):
     return rho, ux, uy
 
 
+@njit(parallel=True)
 def stream(f):
     """Shift every f_i one cell along direction i.
 
     Naive: np.roll per direction into a brand new array. This is the single
     biggest source of memory traffic in the whole solver.
     """
+    _, nx, ny = f.shape
     out = np.empty_like(f)
-    for i in range(Q):
-        out[i] = np.roll(np.roll(f[i], C[i, 0], axis=0), C[i, 1], axis=1)
+
+    for x in prange(nx):
+            for y in range(ny):
+                for i in range(Q):
+                       #Direkte berechnund anstelle von np.roll ist schneller mit numba
+                       src_x = (x - C[i, 0]) % nx
+                       src_y = (y - C[i, 1]) % ny
+                       out[i, x, y] = f[i, src_x, src_y]
     return out
 
 
@@ -174,7 +182,10 @@ def run(case="cylinder", nx=400, ny=100, nsteps=2000, reynolds=200.0,
     ux[solid] = 0.0
     uy[solid] = 0.0
     f = equilibrium(rho, ux, uy) #Gratis Warmup das schon war
-    _ = macroscopic(f) #Gratis Warmup den ich aufrufe um die funktion einmal zu kompilieren und die JIT compilation zu triggern
+
+    #Gratis Warmup den ich aufrufe um die funktion einmal zu kompilieren und die JIT compilation zu triggern
+    _ = macroscopic(f)
+    _ = stream(f)
 
     samples = []
     t_start = time.perf_counter()
