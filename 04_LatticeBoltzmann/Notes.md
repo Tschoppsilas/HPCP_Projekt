@@ -12,6 +12,8 @@ Arbeitsnotizen, die später zum Write-up werden. Wird laufend ergänzt.
   `results/benchmark_log.csv`.
 - Zwei Maschinen im Einsatz: lokaler Laptop (Windows, venv) und FHNW-`pub030`-JupyterHub
   (`calc-g-jhub`, ebenfalls venv). Finale Zahlen dort nochmal sauber nachmessen.
+- Kernanzahl: Laptop 22 logische Prozessoren (`$env:NUMBER_OF_PROCESSORS`), Cluster (pub030,
+  calc-g-jhub) 32 Kerne (`nproc`).
 
 ## 1. Baseline-Profiling (cProfile, cylinder, 400x100, 500 Steps)
 
@@ -84,7 +86,7 @@ konsistent immer noch deutlich über der Baseline-Zeit (5.58 s). Das spricht dag
 Konkurrenz durch andere Nutzer auf dem geteilten JupyterHub-Node die Hauptursache ist — der
 Effekt ist stabil reproduzierbar, keine einmalige Störung.
 
-**Hypothese, warum:** `@njit` allein ändert nicht, *was* der Code berechnet, nur wie er
+**Hypothese (Schritt 1):** `@njit` allein ändert nicht, *was* der Code berechnet, nur wie er
 kompiliert wird. `equilibrium()` besteht weiterhin aus NumPy-Array-Ausdrücken innerhalb eines
 Python-Loops über 9 Richtungen — Numba kompiliert das zwar, aber es bleibt im Kern "auf ganzen
 Arrays mit Temporären rechnen", was direkt gegen NumPys eigene SIMD-vektorisierte
@@ -95,16 +97,65 @@ Aufruf/Temporär-Array offenbar proportional grösser, deshalb half das Wegschne
 **Konsequenz:** Der eigentliche Numba-Vorteil sollte erst kommen, wenn `equilibrium()` (und der
 Rest) zu einem **expliziten Scalar-Loop über die Gitterzellen** umgebaut wird (`for x ... for
 y ...`, alle 9 Richtungen pro Zelle mit reinen Zahlen statt Zwischen-Arrays) statt die
-NumPy-Array-Ausdrucks-Version einfach zu dekorieren. Das ist eine strukturell andere Codeform, die
-NumPy nicht effizient ausdrücken kann, genau dort kann Numba/LLVM NumPy wirklich schlagen (keine
-Temporäre, enger Loop, Auto-Vektorisierung) — und ist auch die Form, die sich sauber mit `prange`
-über das Gitter parallelisieren lässt. War ohnehin der Plan (alles zu einem Kernel fusionieren) —
-dieses Ergebnis ist ein Beleg *warum* das nötig ist, nicht nur "wäre schön". Lohnt sich, das im
-Write-up explizit als getestete und erklärte (nicht nur angenommene) Hypothese festzuhalten.
+NumPy-Array-Ausdrucks-Version einfach zu dekorieren.
 
-### Schritt 2 — (als Nächstes) Umbau zu explizitem Scalar-Loop pro Zelle
+### Schritt 2 — Umbau zu explizitem Scalar-Loop + `prange` über die Gitterzellen
 
-(ausfüllen, sobald erledigt)
+`equilibrium()` umgebaut: `nx, ny = rho.shape` am Anfang, danach `for x in prange(nx): for y in
+range(ny): ...` mit skalarer Rechnung pro Zelle (kein Array mehr, `usqr` und `cu` jetzt mit
+`[x, y]` indiziert statt auf dem ganzen Array). Decorator zu `@njit(parallel=True)` geändert,
+`from numba import njit, prange`.
+
+Zwei Anfängerfehler unterwegs (beide behoben): `import prange` statt `from numba import prange`
+(gleicher Fehler wie bei `njit` in Schritt 1 — `prange`/`njit` sind keine eigenen Packages,
+sondern leben in `numba`), und `usqr` zunächst noch ohne `[x, y]`-Indizierung (rechnete auf dem
+ganzen Array statt auf der aktuellen Zelle — hätte den ganzen Sinn des Scalar-Loop-Umbaus
+zunichtegemacht).
+
+Ergebnis — Korrektheit: weiterhin `OK` in `validate.py` auf beiden Maschinen.
+
+Ergebnis — Performance, nochmal überraschend, diesmal umgekehrt zu Schritt 1:
+
+| Maschine | Baseline | Schritt 1 (njit, Array-Ausdrücke) | Schritt 2 (prange, Scalar-Loop) |
+|----------|----------|-------------------------------------|-----------------------------------|
+| Laptop   | 10.45 s  | 6.59 s -> **1.59x schneller**       | 7.57 s / 10.562 MLUPS -> **1.38x schneller** (schlechter als Schritt 1!) |
+| Cluster  | 5.58 s   | 6.54 s -> **0.85x langsamer**        | 3.80 s / 21.025 MLUPS -> **1.47x schneller** (viel besser als Schritt 1!) |
+
+**Erste Hypothese (verworfen):** paralleler Dispatch-Overhead pro Aufruf (equilibrium() wird
+2000x pro Lauf aufgerufen) trifft auf wenige Kerne beim Laptop und viele Kerne auf dem Cluster.
+Kernanzahl nachgemessen: Laptop 22 logische Prozessoren, Cluster 32 Kerne -- das ist kein grosser
+Unterschied (Faktor ~1.45), erklärt einen so starken Umschwung nicht überzeugend. Diese Hypothese
+wird daher nicht als Haupterklärung übernommen.
+
+**Überarbeitete, ehrlichere Hypothese:** wahrscheinlich nicht (nur) die reine Kernzahl, sondern
+*wie* die Kerne beschaffen sind und wie viel Speicherbandbreite dahintersteckt:
+- Der Laptop hat vermutlich eine heterogene CPU (schnelle "Performance"- und schwächere
+  "Efficiency"-Kerne, typisch bei modernen Intel-Laptop-CPUs) -- `NUMBER_OF_PROCESSORS` zählt
+  beide gleich, sie liefern aber nicht gleich viel Durchsatz. Ein Cluster-Knoten hat 32
+  gleichwertige Server-Kerne.
+- Deutlich weniger Speicherbandbreite auf einem Laptop als auf einem Server-Knoten. Falls LBM
+  bandbreitenlimitiert ist (wovon das Projekt-Readme ausgeht), bringt mehr Threads auf dem Laptop
+  ab einem Punkt nichts mehr oder schadet sogar (alle Kerne teilen sich dieselbe knappe
+  Bandbreite); auf dem Cluster mit mehr Bandbreite können mehr Threads tatsächlich mehr Durchsatz
+  liefern.
+- Hintergrundrauschen auf dem Laptop (Windows, OneDrive-Sync, Energie-/Thermik-Management), das
+  ein dedizierter Linux-Cluster-Knoten nicht hat.
+
+**Wichtig für die Einordnung:** die reine Kernzahl ist nicht die ganze Erklärung, das wird hier
+bewusst offen und ehrlich so stehen gelassen statt eine hübschere, aber nicht ganz stimmige
+Geschichte zu erzählen. Das bestätigt aber nochmal den bereits im Projekt-Readme genannten
+Grundsatz: finale Zahlen gehören auf `pub030` gemessen, nicht auf dem Laptop -- Consumer-Hardware
+verhält sich bei Thread-Parallelismus unvorhersehbarer als ein dedizierter Server-Knoten.
+
+### Schritt 3 — (als Nächstes) volle Kernel-Fusion
+
+Plan: `macroscopic()`, die Bounce-back-Schleife und `stream()` ebenfalls zu Scalar-Loops
+umbauen, und alles (Macroscopic + Randbedingungen + Kollision + Bounce-back + Streaming) zu
+einem einzigen `@njit(parallel=True)`-Kernel pro Zeitschritt fusionieren, statt mehrere separat
+parallelisierte Funktionen pro Schritt aufzurufen. Ziel: nur noch ein Parallelisierungs-Overhead
+pro Zeitschritt statt mehrerer kleiner.
+
+(Rest ausfüllen, sobald erledigt)
 
 ## 5. Benchmark-Resultate
 
@@ -113,10 +164,8 @@ Kernel weiter ist, für die finale Write-up-Tabelle)
 
 ## 6. Korrektheit
 
-- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für den equilibrium-njit-Schritt,
-  bit-identisch (0.000e+00 max rel err) — erwartbar, da noch kein Umbau stattfand; muss nach dem
-  Scalar-Loop-Umbau nochmal geprüft werden, da sich dann die Auswertungsreihenfolge ändert
-  (Gleitkomma-Arithmetik ist nicht immer assoziativ).
+- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für Schritt 1 (bit-identisch, 0.000e+00 max
+  rel err) und Schritt 2 (weiterhin OK trotz geänderter Loop-Reihenfolge).
 
 ## 7. Reflexion
 
