@@ -1,1 +1,1 @@
-python bench.py --case cylinder --size small  --label "krurz_praegnant"
+python bench.py --case cylinder --size small  --label krurz_praegnant

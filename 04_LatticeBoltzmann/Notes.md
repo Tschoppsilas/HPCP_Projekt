@@ -215,30 +215,115 @@ Wegfallen dieser Allokation+Kopie (ersetzt durch direkte Indexberechnung) zeigt 
 deutlichsten, konsistentesten Gewinn von allen bisherigen Schritten -- auf beiden Maschinen, ohne
 die Mehrdeutigkeit, die wir bei `macroscopic()` gesehen hatten.
 
-### Schritt 5 — (als Nächstes) Bounce-back/Randbedingungen, dann ggf. volle Fusion
+### Schritt 5 — Kollision + Bounce-back fusioniert, in `collide_and_bounce()`
 
-Verbleibender grosser Posten aus dem Profiling: die Randbedingungs-/Kollisions-/Bounce-back-Logik,
-die noch direkt im `run()`-Körper steht (nicht in einer eigenen Funktion), inkl. der booleschen
-Indizierung `fpost[i][bounce] = f[OPP[i]][bounce]`. Um das zu njit-en, muss das entweder in eine
-eigene Funktion ausgelagert werden, oder gleich Teil einer grösseren fusionierten Funktion werden.
+Kollision (`fpost = f - omega * (f - feq)`) und die Bounce-back-Schleife
+(`fpost[i][bounce] = f[OPP[i]][bounce]`) waren im Original zwei getrennte NumPy-Operationen
+hintereinander -- zusammengelegt in eine `@njit(parallel=True)`-Funktion mit Scalar-Loop:
+solid/bounce-Zellen kriegen den Bounce-back-Wert, alle anderen die normale BGK-Kollisionsformel,
+beides pro Zelle in einem Durchgang, keine Zwischen-Arrays. Warm-up (`_ = collide_and_bounce(f,
+f, omega, bounce)`) vor `t_start` ergänzt.
 
-Offene Frage, abhängig von der verbleibenden Zeit: nochmal ein einzelner Schritt (Bounce-back als
-eigene Funktion), oder direkt die grosse Fusion aller Teile zu einem Kernel. Speedup ist mit 2.48x
-(Laptop) / 1.98x (Cluster) bereits solide -- Rest der Zeit auch für Write-up-Teile einplanen
-(Roofline, Ghia-Vergleich, medium/large-Läufe), nicht nur weiter Code optimieren.
+Ergebnis — Korrektheit: `OK` auf beiden Maschinen.
 
-(Rest ausfüllen, sobald erledigt)
+Ergebnis — Performance, der grösste Sprung von allen Schritten:
 
-## 5. Benchmark-Resultate
+| Maschine | Baseline | Schritt 4 (+ stream) | Schritt 5 (+ collide_and_bounce) | Speedup gesamt |
+|----------|----------|------------------------|--------------------------------------|-----------------|
+| Laptop   | 10.45 s  | 4.21 s (2.48x)          | **1.23 s / 65.175 MLUPS**            | **8.49x** |
+| Cluster  | 5.58 s   | 2.82 s (1.98x)          | **2.02 s / 39.633 MLUPS**            | **2.76x** |
 
-(laufendes Log liegt in `results/benchmark_log.csv` — relevante Zeilen hier reinziehen, sobald der
-Kernel weiter ist, für die finale Write-up-Tabelle)
+Grösster Einzelschritt bisher -- plausibel, weil hier gleich zwei teure Dinge auf einmal wegfallen:
+die boolesche Fancy-Indexing-Bounce-back-Schleife (bekannt dafür, in NumPy vergleichsweise teuer
+zu sein: temporäre Index-Arrays, nicht-zusammenhängender Speicherzugriff) UND eine weitere
+Temporär-Array-Allokation für `fpost`. Auf dem Laptop wirkt sich das besonders stark aus, auf dem
+Cluster auch deutlich, aber verhältnismässig kleiner -- passend zum bisherigen Muster, dass der
+Laptop empfindlicher auf Python-/NumPy-Overhead reagiert als der Cluster.
+
+### Entscheidung: keine volle Kernel-Fusion mehr
+
+Bewusster Stopp an dieser Stelle, mit Blick auf die verbleibende Zeit (siehe unten). Die vier
+Kernfunktionen (`equilibrium`, `macroscopic`, `stream`, `collide_and_bounce`) sind jetzt alle
+`@njit(parallel=True)`, decken die grosse Mehrheit der ursprünglich profilten Laufzeit ab, und der
+Speedup ist bereits sehr deutlich (8.49x / 2.76x). Eine komplette Fusion zu einem einzigen
+Riesen-Kernel (inkl. Randbedingungen) wäre der nächste mögliche Schritt gewesen, aber der
+Aufwand/Risiko-Nutzen lohnt sich angesichts der verbleibenden Zeit nicht mehr -- die übrigen
+Deliverables (Roofline, Scaling-Studien, Physik-Validierung inkl. `cavity`/Ghia-Vergleich, der
+Report selbst) sind noch offen und zählen genauso zur Note. Bewusste Ingenieurs-Entscheidung, kein
+Zeitmangel-Zufall -- das gehört so in die Reflexion.
+
+## 5. Benchmark-Resultate — Zusammenfassung über alle Schritte (cylinder, small)
+
+| Schritt | Laptop | Cluster |
+|---------|--------|---------|
+| Baseline | 10.45 s / 7.656 MLUPS | 5.58 s / 14.344 MLUPS |
+| 1: njit equilibrium (Array-Ausdrücke) | 6.59 s (1.59x) | 6.54 s (0.85x, langsamer) |
+| 2: prange equilibrium (Scalar-Loop) | 7.57 s (1.38x) | 3.80 s (1.47x) |
+| 3: + macroscopic (mit Warm-up-Fix) | 5.69 s (1.84x) | 3.83 s (1.46x) |
+| 4: + stream | 4.21 s (2.48x) | 2.82 s (1.98x) |
+| 5: + collide_and_bounce | **1.23 s (8.49x)** | **2.02 s (2.76x)** |
+
+Vollständiges Log mit allen Einzelläufen liegt in `results/benchmark_log.csv`.
 
 ## 6. Korrektheit
 
-- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für alle bisherigen Schritte (Schritt 1-4),
-  bit-identisch bei Schritt 1, 2 und 4; weiterhin exakt passend bei Schritt 3.
+- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für alle Schritte 1-5. Bit-identisch bei
+  Schritt 1, 2, 4, 5 (kein Reduktions-/Reihenfolge-Effekt); bei Schritt 3 (macroscopic) ebenfalls
+  weiterhin exakt.
+- `cavity`-Fall jetzt ebenfalls getestet (voller optimierter Pipeline, alle vier Kernfunktionen):
+  `correctness: OK` auf beiden Maschinen, `rtol=1e-6`.
+
+  | Maschine | Baseline | Optimiert | Speedup |
+  |----------|----------|-----------|---------|
+  | Laptop   | 11.34 s (7.055 MLUPS) | 1.52 s (52.593 MLUPS) | 7.46x |
+  | Cluster  | 5.20 s (15.372 MLUPS) | 2.06 s (38.878 MLUPS) | 2.52x |
+
+  Damit sind beide Testfälle (cylinder, cavity) mit der optimierten Version korrekt validiert.
+
+- Zusaetzlich fuer die Ghia-Validierung: quadratisches Gitter 128x128, Re=100, 10'000 Steps
+  (Ghias Referenzwerte gelten nur fuer eine quadratische Kavitaet, das Standard-Preset `small`
+  ist mit 400x100 rechteckig und dafuer ungeeignet). Baseline- und optimierter Lauf bit-identisch
+  auf beiden Maschinen: `validate.py --rtol 1e-6` -> alle drei Felder (ux, uy, rho) `PASS`,
+  `max rel err 0.000e+00`. Dateien: `data/ghia_cavity.npz` (Baseline), `data/ghia_cavity_numba.npz`
+  (optimiert). Naechster Schritt: physikalische Validierung des cavity-Profils gegen Ghia, Ghia &
+  Shin (1982), Table I (Re=100).
+
+## 6b. Physik-Validierung: Ghia, Ghia & Shin (1982)
+
+Cavity-Fall, quadratisches Gitter 128x128, Re=100 (Standard fuer `--case cavity`), optimierte
+Version (`optimized/lbm_d2q9_numba.py`). Vergleich der Zentrallinien-Profile (u entlang der
+vertikalen, v entlang der horizontalen Mittellinie, beide normiert mit u0) gegen die transkribierten
+Tabellenwerte aus Ghia, Ghia & Shin (1982), Table I, Re=100 -- Skript `ghia_compare.py`
+(eigenes Skript, np.interp an den Ghia-Stuetzstellen).
+
+**Konvergenz-Check:** 10'000 vs. 20'000 Steps verglichen. Bei 10k war v.a. die Rezirkulationszone
+(mittlerer Bereich, y~0.28-0.45) noch deutlich zu flach (Abweichung bis ~22%). Bei 20k Steps deutlich
+naeher an Ghia (siehe unten) -- klarer Hinweis, dass 10k noch nicht eingeschwungen war, 20k praktisch
+konvergiert (Deckel-Bereich hatte sich zwischen 10k und 20k kaum mehr veraendert). Laenger laufen
+lassen (z.B. 40k) haette laut diesem Trend nur noch marginalen Zusatznutzen -- angesichts Zeitbudget
+bei 20k gestoppt.
+
+**Ergebnis bei 20'000 Steps** (Randpunkte y=0/1 bzw. x=0/1 ausgeschlossen -- trivial durch
+Randbedingung, keine Validierungsaussage):
+
+| Profil | max. abs. Differenz | mittlere abs. Differenz |
+|--------|---------------------|--------------------------|
+| u (vertikale Mittellinie) | 0.0208 | 0.0092 |
+| v (horizontale Mittellinie) | 0.0078 | 0.0049 |
+
+Form/Topologie stimmt vollstaendig ueberein (Nulldurchgaenge, Vorzeichen, Lage des
+Rezirkulationszentrums). Groessere Abweichung bei u nahe am Deckel (~2%) und in der
+Rezirkulationszone (~5-6%) -- plausibel durch Gitteraufloesung (128x128 LBM vs. Ghias 129x129
+Finite-Differenzen) und LBM-Kompressibilitaet (tau=0.689, endliche Machzahl) erklaerbar, nicht durch
+einen Fehler. Als validiertes Ergebnis akzeptiert.
+
+Plot: `figures/ghia_validation.png` (erzeugt von `ghia_compare.py`) -- zwei Teilplots, u(y) und v(x),
+jeweils eigene Linie gegen Ghia-Marker. Hinweis fuer den Report: fuer den Plot wurde der
+Deckel-Randpunkt (y=1.0) manuell auf den analytisch bekannten Wert u/u0=1.0 korrigiert (siehe oben,
+Export-Artefakt durch solid-Maskierung) -- die Tabellenwerte weiter oben waren davon nicht betroffen,
+da dieser Randpunkt dort schon ausgeschlossen war.
 
 ## 7. Reflexion
 
-(am Schluss ausfüllen)
+(am Schluss ausfüllen -- die "keine volle Fusion mehr"-Entscheidung oben gehört hier explizit
+rein: was mit mehr Zeit noch gegangen wäre, und warum der Stopp trotzdem richtig war)
