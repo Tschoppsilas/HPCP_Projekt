@@ -29,6 +29,9 @@ from pathlib import Path
 
 import numpy as np
 
+#Meine Importe
+from numba import njit
+
 # ----------------------------------------------------------------------------
 # D2Q9 lattice constants
 #
@@ -58,6 +61,7 @@ SIZES = {
 # ----------------------------------------------------------------------------
 # Core kernels — naive on purpose
 # ----------------------------------------------------------------------------
+@njit
 def equilibrium(rho, ux, uy):
     """Equilibrium distribution for every cell.
 
