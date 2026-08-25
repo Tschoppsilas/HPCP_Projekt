@@ -1,12 +1,13 @@
 # Baseline requirements. Every baseline runs on NumPy alone except project 03, which needs netCDF4.
 numpy>=1.24
-netCDF4>=1.6         # project 03 only
+#netCDF4>=1.6         # project 03 only
 
 # Useful for the write-up, not needed to run the baselines
 matplotlib>=3.7
 
 # --- Optimization tooling. Install what your chosen strategies need. ---
-# numba>=0.59
+
+numba>=0.59
 # cupy-cuda12x
 # mpi4py>=3.1
 # dask[distributed]>=2024.1
