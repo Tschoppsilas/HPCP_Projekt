@@ -124,6 +124,20 @@ def stream(f):
                        out[i, x, y] = f[i, src_x, src_y]
     return out
 
+#Eigene Funktion colide and bounce.
+@njit(parallel=True)
+def collide_and_bounce(f, feq, omega, bounce):
+    _, nx, ny = f.shape
+    fpost = np.empty_like(f)
+    for x in prange(nx):
+        for y in range(ny):
+            if bounce[x, y]:
+                for i in range(Q):
+                    fpost[i, x, y] = f[OPP[i], x, y]
+            else:
+                for i in range(Q):
+                    fpost[i, x, y] = f[i, x, y] - omega * (f[i, x, y] - feq[i, x, y])
+    return fpost
 
 # ----------------------------------------------------------------------------
 # Cases
@@ -186,7 +200,8 @@ def run(case="cylinder", nx=400, ny=100, nsteps=2000, reynolds=200.0,
     #Gratis Warmup den ich aufrufe um die funktion einmal zu kompilieren und die JIT compilation zu triggern
     _ = macroscopic(f)
     _ = stream(f)
-
+    _ = collide_and_bounce(f, f, omega, bounce)
+    
     samples = []
     t_start = time.perf_counter()
 
@@ -211,11 +226,12 @@ def run(case="cylinder", nx=400, ny=100, nsteps=2000, reynolds=200.0,
             f[:, 0, :] = feq[:, 0, :]          # Dirichlet inlet
         else:
             f[:, :, -1] = feq[:, :, -1]        # Dirichlet lid
-        fpost = f - omega * (f - feq)
+        #fpost = f - omega * (f - feq) => Alter code
+        fpost = collide_and_bounce(f, feq, omega, bounce) # Meine Funktion die die Kollisionsberechnung und das Bounce-Back in einem Schritt macht
 
         # ---- bounce-back inside solid cells (naive: loop + boolean indexing)
-        for i in range(Q):
-            fpost[i][bounce] = f[OPP[i]][bounce]
+        #for i in range(Q):
+        #    fpost[i][bounce] = f[OPP[i]][bounce]
 
         # ---- streaming
         f = stream(fpost)

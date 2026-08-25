@@ -183,17 +183,49 @@ bevor eine inhaltliche Erklärung dafür gesucht wird.
 
 Korrektheit: weiterhin `OK` auf beiden Maschinen.
 
-### Schritt 4 — (als Nächstes) `stream()` + Bounce-back, dann volle Kernel-Fusion
+### Schritt 4 — `stream()` zu Scalar-Loop + `prange`
 
-Plan: `stream()` (Streaming-Schritt, aktuell doppeltes `np.roll` in ein frisches Array) und die
-Bounce-back-Schleife aus dem `run()`-Körper ebenfalls zu Scalar-Loops umbauen -- inklusive
-Warm-up-Aufruf vor `t_start`, diesmal von Anfang an mitgedacht. Am Ende, falls Zeit reicht: alles
-(Macroscopic + Randbedingungen + Kollision + Bounce-back + Streaming) zu einem einzigen
-`@njit(parallel=True)`-Kernel pro Zeitschritt fusionieren, statt mehrere separate Funktionen pro
-Schritt aufzurufen -- auch wenn Schritt 3 zeigt, dass der Overhead mehrerer separater Aufrufe
-kleiner sein könnte als zuerst gedacht, bleibt die Fusion sinnvoll: weniger Speicherverkehr
-zwischen den Schritten (keine Zwischen-Arrays wie `feq`, `fpost` mehr nötig), was näher am
-eigentlichen Ziel (Bandbreite sparen) liegt als die Overhead-Frage allein.
+Gleiches Muster, diesmal ohne Summierung, nur "Werte von der Nachbarzelle holen" statt zweimal
+`np.roll` in ein frisches Array. `np.roll(arr, shift)` entspricht mathematisch: neuer Wert an
+Position x kommt von Position `(x - shift) mod n`. Direkt umgesetzt als:
+```python
+src_x = (x - C[i, 0]) % nx
+src_y = (y - C[i, 1]) % ny
+out[i, x, y] = f[i, src_x, src_y]
+```
+`out = np.empty_like(f)` bleibt nötig (kein In-place-Update möglich, da sonst Werte überschrieben
+würden, die noch gelesen werden müssen). Warm-up (`_ = stream(f)`) diesmal von Anfang an korrekt
+vor `t_start` eingebaut -- keine Fehler mehr bei diesem Schritt, weder inhaltlich noch beim
+Messen.
+
+Ergebnis — Korrektheit: `OK` auf beiden Maschinen, bit-identisch (reines Kopieren, keine
+Summierung, keine Reihenfolge-Änderung, die Gleitkomma-Rundung beeinflussen könnte).
+
+Ergebnis — Performance, klarer und grösster Sprung bisher, auf **beiden** Maschinen:
+
+| Maschine | Baseline | Schritt 3 (equilibrium + macroscopic) | Schritt 4 (+ stream) | Speedup gesamt |
+|----------|----------|------------------------------------------|--------------------------|-----------------|
+| Laptop   | 10.45 s  | 5.69 s (1.84x)                            | **4.21 s / 19.015 MLUPS** | **2.48x** |
+| Cluster  | 5.58 s   | 3.83 s (1.46x)                            | **2.82 s / 28.409 MLUPS** | **1.98x** |
+
+Passt zur Baseline-Profiling-Erwartung: `stream()`s doppeltes `np.roll` in ein frisches Array war
+im Docstring des Originalcodes explizit als "the single biggest source of memory traffic in the
+whole solver" markiert, und ~65% von `stream()`s Laufzeit war reines `np.roll`. Das komplette
+Wegfallen dieser Allokation+Kopie (ersetzt durch direkte Indexberechnung) zeigt hier den
+deutlichsten, konsistentesten Gewinn von allen bisherigen Schritten -- auf beiden Maschinen, ohne
+die Mehrdeutigkeit, die wir bei `macroscopic()` gesehen hatten.
+
+### Schritt 5 — (als Nächstes) Bounce-back/Randbedingungen, dann ggf. volle Fusion
+
+Verbleibender grosser Posten aus dem Profiling: die Randbedingungs-/Kollisions-/Bounce-back-Logik,
+die noch direkt im `run()`-Körper steht (nicht in einer eigenen Funktion), inkl. der booleschen
+Indizierung `fpost[i][bounce] = f[OPP[i]][bounce]`. Um das zu njit-en, muss das entweder in eine
+eigene Funktion ausgelagert werden, oder gleich Teil einer grösseren fusionierten Funktion werden.
+
+Offene Frage, abhängig von der verbleibenden Zeit: nochmal ein einzelner Schritt (Bounce-back als
+eigene Funktion), oder direkt die grosse Fusion aller Teile zu einem Kernel. Speedup ist mit 2.48x
+(Laptop) / 1.98x (Cluster) bereits solide -- Rest der Zeit auch für Write-up-Teile einplanen
+(Roofline, Ghia-Vergleich, medium/large-Läufe), nicht nur weiter Code optimieren.
 
 (Rest ausfüllen, sobald erledigt)
 
@@ -204,8 +236,8 @@ Kernel weiter ist, für die finale Write-up-Tabelle)
 
 ## 6. Korrektheit
 
-- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für Schritt 1 (bit-identisch, 0.000e+00 max
-  rel err), Schritt 2 und Schritt 3 (weiterhin OK trotz geänderter Loop-Reihenfolge).
+- `validate.py`, rtol 1e-6: PASS auf beiden Maschinen für alle bisherigen Schritte (Schritt 1-4),
+  bit-identisch bei Schritt 1, 2 und 4; weiterhin exakt passend bei Schritt 3.
 
 ## 7. Reflexion
 
