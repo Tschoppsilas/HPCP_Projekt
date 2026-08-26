@@ -370,9 +370,29 @@ Cache-Line ueblicherweise zuerst ein "verstecktes" Lesen dieser Line ausloest):
 | Laptop   | 63.92 GB/s   | 85.23 GB/s | 5.73 GB/s  | **6.7%** |
 | Cluster  | 20.30 GB/s   | 27.07 GB/s | 22.01 GB/s | **81.3%** |
 
-Plot: `figures/roofline.png` (`roofline.py`).
+**Rechen-Dach** (zweiter Mikrobenchmark, `compute_bench.py`: kleines Array bleibt im Cache,
+sehr viele FMA-artige Operationen, damit die Zeit rein von der Rechenleistung dominiert wird,
+gleiches `@njit(parallel=True)`/`prange`-Muster):
 
-**Interpretation -- grosse Diskrepanz Laptop vs. Cluster:** Der Cluster erreicht bei `medium`
+| Maschine | Rechen-Dach (gemessen) | Speicher-Dach (korrigiert) | Knick (Ridge Point) |
+|----------|--------------------------|------------------------------|------------------------|
+| Laptop   | 17.17 GFLOP/s | 85.23 GB/s | AI = 0.201 FLOP/Byte |
+| Cluster  | 33.88 GFLOP/s | 27.07 GB/s | AI = 1.252 FLOP/Byte |
+
+Hinweis: beide Daecher sind selbst gemessene, mit Numba-Skalarschleifen erreichbare Grenzen
+(kein manuelles SIMD) -- keine theoretischen Hardware-Datenblatt-Maxima.
+
+Plot: `figures/roofline.png` (`roofline.py`), mit korrektem Roofline-Knick (Speicher-Diagonale
+bricht am Ridge Point in die flache Rechenleistungs-Grenze).
+
+**Interpretation -- grosse Diskrepanz Laptop vs. Cluster:** Bei unserer AI (0.321 FLOP/Byte)
+liegt der Cluster noch links vom eigenen Knick (1.252) -- also im speicherlimitierten Bereich,
+und erreicht dort plausibel 81% seines Speicher-Dachs. Der Laptop dagegen hat einen sehr
+niedrigen Knick (0.201, weil sein Speicher-Dach im Verhaeltnis zur eigenen Rechenleistung sehr
+hoch ist) -- unsere Pipeline liegt bei ihm im Modell schon im rechenlimitierten Bereich, erreicht
+aber nur 11% des (gemessenen) Rechen-Dachs. Unabhaengig davon, welches Dach man anlegt: der
+Laptop bleibt bei `medium` weit unter jeder plausiblen Grenze -- die Unterauslastung ist real,
+nicht nur ein Artefakt der Modellwahl. Der Cluster erreicht bei `medium`
 plausibel den Grossteil (81%) seiner eigenen Speicherbandbreite -- genau das erwartete Bild fuer
 einen speicherbandbreiten-limitierten Stencil. Der Laptop dagegen schoepft nur ~7% seines
 Dachs aus, und faellt bei `medium` sogar hinter den Cluster zurueck (241 s vs. 62.7 s optimiert
@@ -391,6 +411,20 @@ bewiesene Hypothesen (Zeitbudget liess keine tiefere Instrumentierung mehr zu):
 Fazit: bei kleinen Problemgrössen (`small`) ist der Laptop schneller (Cache-Vorteil, kurze
 Laufzeit), bei realistischeren Groessen (`medium`) dreht sich das Bild um -- eine wichtige
 Erkenntnis, die eine reine `small`-Messung verschleiert haette.
+
+**Warum die Optimierung so viel bringt -- Baseline vs. optimiert am Beispiel `equilibrium`:**
+Die Physik/FLOPs sind bei Baseline (NumPy) und optimiert (Numba) identisch -- am Speicherverkehr
+aendert sich aber viel: NumPy materialisiert bei jedem einzelnen Rechenschritt
+(`ux*ux`, `+`, `*1.5`, ...) ein eigenes temporaeres Array im Speicher, waehrend der
+Numba-Scalar-Loop alles pro Zelle in Registern durchrechnet und nur das Endresultat schreibt.
+Von Hand durchgerechnet fuer `equilibrium()`: Baseline bewegt dafuer ~1944 Bytes/Zelle,
+die optimierte Version nur 96 Bytes/Zelle -- Faktor ~20, bei exakt gleicher Rechenarbeit.
+(Fuer die anderen drei Kernel liesse sich das grundsaetzlich auch herleiten, aber von Hand
+nicht zuverlaessig genug fuer eine belastbare Gesamtzahl -- NumPy kann intern Zwischenschritte
+anders behandeln als angenommen; ohne echtes Memory-Profiling-Tool nicht verifizierbar. Deshalb
+hier nur das eine, klar nachvollziehbare Beispiel statt einer unsicheren Gesamt-AI fuer die
+Baseline.) Das erklaert die Optimierung nicht nur "weil Numba schneller ist", sondern konkret
+*warum*: weniger Speicherverkehr pro FLOP, nicht mehr FLOPs.
 
 ## 7. Reflexion
 
