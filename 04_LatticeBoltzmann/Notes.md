@@ -443,19 +443,38 @@ Zeitgruenden: bei `medium` haette schon ein Lauf mit 1 Thread sehr lange gedauer
 | 24 | 2.06 s | 1.71x |   7.1% |
 | 32 | 2.17 s | 1.62x |   5.1% |
 
-Plot: `figures/strong_scaling.png` (`scaling_plot.py`).
+**Gegenprobe mit `medium`** (1000x250, 10'000 Steps, gleicher Cluster,
+`results/strong_scaling_medium.txt`, im Hintergrund via `nohup` waehrend Meeting/Mittagspause
+gelaufen):
 
-**Interpretation:** Bestes Ergebnis bei **8 Threads** (2.00x, 25% Effizienz) -- danach wird es
-wieder **langsamer**, bei 32 Threads sogar schlechter als bei nur 2 Threads. Kein Messfehler,
-sondern plausibel durch das Problem selbst erklaerbar: bei `small` (400x100 = 40'000 Zellen) wird
-mit steigender Thread-Zahl die Arbeit pro Thread immer kleiner, waehrend die vier
-`@njit(parallel=True)`-Kernel jede Zeitschritt-Iteration jeweils neu eine Parallelregion
-aufmachen (4 Kernel x 2000 Steps = 8000 Parallelregion-Starts). Ab einer gewissen Thread-Zahl
-dominiert der Overhead fuers Aufteilen/Zusammenfuehren der Arbeit die eigentliche Nutzarbeit --
-klassisches Symptom eines fuer die Kernzahl zu kleinen Problems. Passt inhaltlich zur
-Roofline-Erkenntnis oben (auch dort zeigte `small` ein verzerrtes Bild, `medium` das
-realistischere) -- fuer eine sehr gute Skalierung braeuchte man ein deutlich groesseres
-Problem pro Kern, wie es bei `large` der Fall waere.
+| Threads | Laufzeit | Speedup | Effizienz |
+|---------|----------|---------|-----------|
+| 1  | 150.70 s | 1.00x | 100.0% |
+| 2  |  81.30 s | 1.85x |  92.7% |
+| 4  |  64.00 s | 2.36x |  58.9% |
+| 8  |  54.68 s | 2.76x |  34.5% |
+| 16 |  60.96 s | 2.47x |  15.5% |
+| 24 |  61.28 s | 2.46x |  10.2% |
+| 32 |  63.18 s | 2.39x |   7.5% |
+
+Plot: `figures/strong_scaling.png` (`scaling_plot.py`, small + medium im Vergleich).
+
+**Interpretation:** Beide Groessen zeigen dasselbe Muster -- Optimum bei **8 Threads**, danach
+wieder langsamer -- aber `medium` durchweg besser: hoeherer Peak-Speedup (2.76x vs. 2.00x) und
+bei 32 Threads faellt es nicht so tief ab wie `small` (dort war 32 Threads schlechter als 2
+Threads; bei `medium` bleibt selbst der schlechteste Mehr-Thread-Wert klar besser als 1 Thread).
+Erwartungsgemaess: mehr Arbeit pro Thread verduennt den Parallelregion-Overhead (siehe `small`-
+Erklaerung oben).
+
+Dass es aber auch bei `medium` ab 8 Threads bergab geht, hat noch einen zweiten, aus der
+Roofline-Analyse bereits bekannten Grund: bei `medium` erreicht der Cluster schon mit seinen
+32 Threads 81% seiner eigenen Speicherbandbreite (Abschnitt 6c) -- die Speicherbandbreite ist
+also fast schon ausgereizt. Ab dem Punkt, wo die Bandbreite der limitierende Faktor ist (nicht
+mehr die Rechenkerne), bringen weitere Threads keinen Zusatznutzen mehr, nur zusaetzliche
+Synchronisations-/Cache-Konkurrenz-Kosten -- das erklaert, warum die Kurve nicht einfach
+langsamer waechst, sondern aktiv wieder abfaellt. Die Strong-Scaling-Studie bestaetigt damit
+unabhaengig, was die Roofline schon nahelegte: der Kernel ist speicherbandbreiten-limitiert,
+nicht kernanzahl-limitiert -- mehr Kerne allein loesen das Problem nicht.
 
 ## 7. Reflexion
 
