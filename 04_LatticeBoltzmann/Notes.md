@@ -426,6 +426,37 @@ hier nur das eine, klar nachvollziehbare Beispiel statt einer unsicheren Gesamt-
 Baseline.) Das erklaert die Optimierung nicht nur "weil Numba schneller ist", sondern konkret
 *warum*: weniger Speicherverkehr pro FLOP, nicht mehr FLOPs.
 
+## 6d. Strong-Scaling-Studie
+
+Cluster (Threadripper PRO 5955WX, 32 Kerne), `cylinder`/`size=small`, Thread-Zahl ueber
+`NUMBA_NUM_THREADS` variiert (`scaling_strong.sh`, Ergebnisse in
+`results/strong_scaling_small.txt`). Bewusst `small` statt `medium` gewaehlt, rein aus
+Zeitgruenden: bei `medium` haette schon ein Lauf mit 1 Thread sehr lange gedauert.
+
+| Threads | Laufzeit | Speedup | Effizienz |
+|---------|----------|---------|-----------|
+| 1  | 3.52 s | 1.00x | 100.0% |
+| 2  | 2.23 s | 1.58x |  78.9% |
+| 4  | 2.12 s | 1.66x |  41.5% |
+| 8  | 1.76 s | 2.00x |  25.0% |
+| 16 | 1.84 s | 1.91x |  12.0% |
+| 24 | 2.06 s | 1.71x |   7.1% |
+| 32 | 2.17 s | 1.62x |   5.1% |
+
+Plot: `figures/strong_scaling.png` (`scaling_plot.py`).
+
+**Interpretation:** Bestes Ergebnis bei **8 Threads** (2.00x, 25% Effizienz) -- danach wird es
+wieder **langsamer**, bei 32 Threads sogar schlechter als bei nur 2 Threads. Kein Messfehler,
+sondern plausibel durch das Problem selbst erklaerbar: bei `small` (400x100 = 40'000 Zellen) wird
+mit steigender Thread-Zahl die Arbeit pro Thread immer kleiner, waehrend die vier
+`@njit(parallel=True)`-Kernel jede Zeitschritt-Iteration jeweils neu eine Parallelregion
+aufmachen (4 Kernel x 2000 Steps = 8000 Parallelregion-Starts). Ab einer gewissen Thread-Zahl
+dominiert der Overhead fuers Aufteilen/Zusammenfuehren der Arbeit die eigentliche Nutzarbeit --
+klassisches Symptom eines fuer die Kernzahl zu kleinen Problems. Passt inhaltlich zur
+Roofline-Erkenntnis oben (auch dort zeigte `small` ein verzerrtes Bild, `medium` das
+realistischere) -- fuer eine sehr gute Skalierung braeuchte man ein deutlich groesseres
+Problem pro Kern, wie es bei `large` der Fall waere.
+
 ## 7. Reflexion
 
 (am Schluss ausfüllen -- die "keine volle Fusion mehr"-Entscheidung oben gehört hier explizit
