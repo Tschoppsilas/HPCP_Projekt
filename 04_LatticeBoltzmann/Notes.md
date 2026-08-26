@@ -323,6 +323,75 @@ Deckel-Randpunkt (y=1.0) manuell auf den analytisch bekannten Wert u/u0=1.0 korr
 Export-Artefakt durch solid-Maskierung) -- die Tabellenwerte weiter oben waren davon nicht betroffen,
 da dieser Randpunkt dort schon ausgeschlossen war.
 
+## 6c. medium-Benchmark und Roofline-Analyse
+
+**medium-Benchmark** (cylinder, 1000x250, 10'000 Steps) -- gleichzeitig die noch offene
+groessere Benchmark-Zahl fuers Reporting und die Datenbasis fuer die Roofline (siehe unten,
+Arbeitsset > L3-Cache):
+
+| Maschine | Baseline | Optimiert | Speedup |
+|----------|----------|-----------|---------|
+| Laptop   | 736.72 s (3.393 MLUPS)  | 241.02 s (10.373 MLUPS) | 3.06x |
+| Cluster  | 191.10 s (13.082 MLUPS) | 62.69 s (39.880 MLUPS)  | 3.05x |
+
+`correctness: OK` auf beiden Maschinen. Auffällig: der Speedup bei `medium` (~3x) ist deutlich
+kleiner als bei `small` (8.49x Laptop / 2.76x Cluster) -- siehe Interpretation unten.
+
+**Arithmetische Intensitaet** (von Hand aus den vier Kernel-Funktionen hergeleitet, siehe Code):
+
+| Kernel | Bytes/Zelle | FLOPs/Zelle |
+|--------|-------------|-------------|
+| equilibrium | 96 | 103 |
+| macroscopic | 96 | 47 |
+| stream | 144 | 0 |
+| collide_and_bounce | 216 | 27 |
+| **Summe** | **552** | **177** |
+
+AI = 177 / 552 = **0.321 FLOP/Byte** -- sehr tief, bestaetigt die im README beschriebene
+Speicherbandbreiten-Limitierung von LBM. Zum Vergleich: eine ideal fusionierte Implementierung
+(ein Lese-, ein Schreibdurchgang) braeuchte nur ~144 Bytes/Zelle -- unsere nicht fusionierte
+Pipeline (4 separate Kernel-Aufrufe/Zeitschritt) bewegt das **3.8-fache** an Speicherverkehr.
+Das ist der quantifizierte Preis der "keine volle Fusion"-Entscheidung von oben.
+
+**Cache-Falle bei `small`:** Bei `size=small` (400x100) ist das Arbeitsset (f/feq/out/fpost,
+je ~2.9 MB) nur ~12.5 MB gross -- passt auf beiden Maschinen komplett in den L3-Cache (Laptop
+24 MB, Cluster 64 MB). Die daraus berechnete "erreichte Bandbreite" (Cluster ~21.9 GB/s) lag
+deshalb sogar leicht ueber der eigenen gemessenen DRAM-Bandbreite -- kein Fehler, sondern
+Cache-Effekt. Fuer eine ehrliche Roofline wurde stattdessen `medium` verwendet (Arbeitsset
+~78 MB, > L3 auf beiden Maschinen).
+
+**Speicherbandbreite:** eigener STREAM-Triad-Mikrobenchmark (`stream_bench.py`,
+`@njit(parallel=True)`, N=100M, gleiches Parallelisierungsmuster wie die LBM-Kernel), plus
+Korrektur um den Write-Allocate-Effekt (Faktor 4/3, da ein Schreibzugriff auf eine neue
+Cache-Line ueblicherweise zuerst ein "verstecktes" Lesen dieser Line ausloest):
+
+| Maschine | STREAM (roh) | STREAM (write-allocate-korrigiert) | Erreicht (medium) | Anteil vom Dach |
+|----------|--------------|--------------------------------------|--------------------|------------------|
+| Laptop   | 63.92 GB/s   | 85.23 GB/s | 5.73 GB/s  | **6.7%** |
+| Cluster  | 20.30 GB/s   | 27.07 GB/s | 22.01 GB/s | **81.3%** |
+
+Plot: `figures/roofline.png` (`roofline.py`).
+
+**Interpretation -- grosse Diskrepanz Laptop vs. Cluster:** Der Cluster erreicht bei `medium`
+plausibel den Grossteil (81%) seiner eigenen Speicherbandbreite -- genau das erwartete Bild fuer
+einen speicherbandbreiten-limitierten Stencil. Der Laptop dagegen schoepft nur ~7% seines
+Dachs aus, und faellt bei `medium` sogar hinter den Cluster zurueck (241 s vs. 62.7 s optimiert
+-- bei `small` war es umgekehrt, Laptop war schneller). Zwei plausible, nicht abschliessend
+bewiesene Hypothesen (Zeitbudget liess keine tiefere Instrumentierung mehr zu):
+1. **Heterogene P-/E-Kerne**: der Laptop-Prozessor hat P- und E-Kerne unterschiedlicher
+   Geschwindigkeit; `prange` verteilt die Arbeit standardmaessig in gleich grossen Chunks --
+   bei genug Arbeit pro Chunk (wie bei `medium`, 6.25x mehr Zellen und 5x mehr Steps als
+   `small`) wartet die ganze Parallelregion auf die langsamsten (E-)Kerne. Bei `small` war die
+   Laufzeit so kurz, dass dieser Effekt kaum ins Gewicht fiel. Passt zur bereits frueher (Schritt 2)
+   dokumentierten, damals noch vorlaeufigen Hypothese zu heterogenen Kernen.
+2. **Thermal Throttling**: ein duenneres Laptop-Chassis kann unter mehreren Minuten Dauerlast
+   (241 s bei `medium` vs. ~1 s bei `small`) die Taktfrequenz drosseln, ein Cluster-Server-Node
+   nicht in vergleichbarem Mass.
+
+Fazit: bei kleinen Problemgrössen (`small`) ist der Laptop schneller (Cache-Vorteil, kurze
+Laufzeit), bei realistischeren Groessen (`medium`) dreht sich das Bild um -- eine wichtige
+Erkenntnis, die eine reine `small`-Messung verschleiert haette.
+
 ## 7. Reflexion
 
 (am Schluss ausfüllen -- die "keine volle Fusion mehr"-Entscheidung oben gehört hier explizit
