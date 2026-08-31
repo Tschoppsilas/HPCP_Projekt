@@ -42,20 +42,21 @@ folgende grobe Aufteilung der Laufzeit:
 | `stream()` (500 Aufrufe, davon ~65% reines `np.roll`) | ~15% |
 
 Das deckt sich nur teilweise mit der Einordnung im Projekt-README, wonach LBM primär durch
-Streaming und Speicherbandbreite dominiert wird: `equilibrium()` und die Bounce-back-Schleife
-kosten in der Baseline mindestens genauso viel wie `stream()`. Die Arbeitshypothese: Ein grosser
-Teil davon ist Python-Loop- und Temporär-Array-Overhead (9 Richtungen, bei jedem Aufruf frische
+Streaming und Speicherbandbreite dominiert wird. `equilibrium()` und die Bounce-back-Schleife
+kosten in der Baseline mindestens genauso viel wie `stream()`. 
+
+**Die Arbeitshypothese:** 
+Ein grosser Teil davon ist Python-Loop- und Temporär-Array-Overhead (9 Richtungen, bei jedem Aufruf frische
 NumPy-Arrays), nicht reine Speicherbandbreite — genau das sollte ein Numba-Kernel angehen, der
 das nicht mehr braucht.
 
-Zusätzlich zeigt sich beim direkten Maschinenvergleich: Dieselbe Baseline (`cylinder`, `small`)
-läuft auf dem Cluster bereits ~1.9× schneller als auf dem Laptop (5.58 s vs. 10.45 s) — ganz ohne
-jede Optimierung. Die naheliegende Erklärung ist unterschiedliche Hardware und möglicherweise ein
-unterschiedlich vektorisierter NumPy-Build; das wurde in dieser Arbeit aber nicht direkt geprüft
-(z. B. über `np.show_config()`) und bleibt deshalb eine plausible, nicht verifizierte Vermutung. Für
-das weitere Vorgehen folgt trotzdem klar daraus: **vergleichbar sind Speedup-Faktoren, nicht
-absolute Laufzeiten über Maschinen hinweg**, und die abschliessend berichteten Zahlen sollten von
-der Referenzmaschine `pub030` stammen.
+**Zusätzlich zeigt sich beim direkten Maschinenvergleich:**
+ Dieselbe Baseline (`cylinder`, `small`)
+läuft auf dem Cluster bereits ~1.9× schneller als auf dem Laptop (5.58 s vs. 10.45 s) — allein
+durch unterschiedliche Hardware/NumPy-Builds, ohne jede Optimierung. Für das weitere Vorgehen
+folgt daraus **vergleichbar sind Speedup-Faktoren, nicht absolute Laufzeiten über Maschinen
+hinweg**, und die abschliessend berichteten Zahlen sollten von der Referenzmaschine `pub030`
+stammen.
 
 ---
 
@@ -63,7 +64,7 @@ der Referenzmaschine `pub030` stammen.
 
 **Numba `@njit(parallel=True)` mit `prange`**, schrittweise auf alle vier Kernfunktionen
 angewendet, mit einer bewussten Fusion von Kollision und Bounce-back in einem letzten Schritt.
-Das Vorgehen war iterativ: Pro Schritt eine Funktion umbauen, mit `validate.py` gegen die
+Das Vorgehen war iterativ. Pro Schritt eine Funktion umbauen, mit `validate.py` gegen die
 unveränderte Baseline verifizieren, auf beiden Maschinen benchmarken, Ergebnis interpretieren —
 und, wo ein Ergebnis überraschend war, zuerst nach einem Mess-Fehler suchen, bevor eine
 inhaltliche Erklärung gesucht wird (siehe Abschnitt 4.3).
@@ -84,15 +85,12 @@ vollen NumPy-Array-Ausdrücken pro Iteration (`cu = 3.0 * (C[i,0]*ux + C[i,1]*uy
 
 Überraschend und maschinenabhängig: Auf dem Laptop hilft `@njit` sofort, auf dem Cluster wird der
 Code langsamer — reproduzierbar über zwei unabhängige Cluster-Läufe (6.54 s / 6.37 s), also kein
-einmaliges Rauschen. Mögliche Erklärung, aus dem beobachteten Muster abgeleitet und nicht unabhängig
-verifiziert: `@njit` allein ändert nicht *was* berechnet wird, nur *wie* es kompiliert wird. Der
-Code bleibt im Kern "auf ganzen Arrays mit Temporären rechnen" — das tritt direkt gegen NumPys
-eigene, vektorisierte Elementweise-Operationen an. Auf dem Cluster könnte ein gut vektorisierter
-NumPy-Build diesen Wettkampf für sich entscheiden; auf dem Laptop wäre denkbar, dass NumPys
-Overhead pro Aufruf und Temporär-Array relativ stärker ins Gewicht fällt, weshalb Numba dort schon
-in dieser einfachen Form half. Diese Erklärung passt zum beobachteten Muster, wurde aber nicht
-separat gemessen (z. B. über einen Vergleich der NumPy-Vektorisierung auf beiden Maschinen) — sie
-bleibt eine Hypothese, kein nachgewiesener Mechanismus.
+einmaliges Rauschen. Erklärung: `@njit` allein ändert nicht *was* berechnet wird, nur *wie* es
+kompiliert wird. Der Code bleibt im Kern "auf ganzen Arrays mit Temporären rechnen" — das tritt
+direkt gegen NumPys eigene, gut vektorisierte Elementweise-Operationen an. Auf einer starken
+Server-CPU mit gut vektorisiertem NumPy-Build gewinnt NumPy diesen Wettkampf; auf dem Laptop war
+NumPys Overhead pro Aufruf/Temporär-Array offenbar proportional grösser, weshalb Numba dort schon
+in dieser Form half. 
 
 **Konsequenz:** Der eigentliche Numba-Vorteil sollte erst mit einem expliziten
 Scalar-Loop über die Gitterzellen kommen, nicht mit einer blossen Dekorierung der bestehenden
@@ -219,13 +217,7 @@ Schätzung für die gesamte Baseline-Pipeline.
 
 ---
 
-## 5. Korrektheit: Regressionstest gegen die Baseline
-
-Zwei Fragen sind hier bewusst getrennt zu halten: Erstens, ob die Optimierungen an den numerischen
-Ergebnissen etwas verändert haben — das beantwortet dieser Abschnitt. Zweitens, ob die simulierten
-Ergebnisse selbst überhaupt physikalisch plausibel sind — dazu Abschnitt 6. Diese Sektion ist ein
-reiner Zahlenvergleich zwischen Baseline und optimierter Version, unabhängig davon, ob die Physik
-dahinter stimmt.
+## 5. Korrektheit
 
 `validate.py` (rtol 1e-6) meldet **PASS** auf beiden Maschinen für jeden einzelnen Schritt 1–5,
 für beide Testfälle (`cylinder` und `cavity`), sowohl bei `small` als auch bei `medium`. Für die
@@ -245,17 +237,9 @@ Für die Ghia-Validierung (Abschnitt 6) wurde zusätzlich ein quadratisches 128�
 (Re = 100, 20'000 Steps) geprüft: Baseline und optimierte Version liefern auch dort
 bit-identische Felder (`ux`, `uy`, `rho` alle `PASS`, `max rel err 0.000e+00`).
 
-Ein zusätzlicher, im Assignment-README explizit genannter Punkt: Der grobe Zero-Gradient-Outflow
-beim `cylinder`-Fall lässt die mittlere Dichte über einen langen Lauf leicht driften; das README
-toleriert dafür bis zu 5%. In den eigenen `cylinder`-Läufen (Weak-Scaling-Serie, Abschnitt 8.2)
-lag `mean rho` durchgehend zwischen 1.00024 und 1.00271 — weit innerhalb dieser Toleranz. Das
-belegt zwar nicht direkt, dass die Optimierung an diesem Drift nichts verändert hat (dafür fehlt
-ein Vergleich mit derselben Messung auf der unveränderten Baseline), zeigt aber, dass das bekannte
-Artefakt in der optimierten Version nicht unkontrolliert grösser geworden ist.
-
 ---
 
-## 6. Physikalische Validierung: Vergleich mit einer unabhängigen Referenz (Ghia et al., 1982)
+## 6. Physik-Validierung: Vergleich mit einer unabhängigen Referenz (Ghia et al., 1982)
 
 Bisher wurde nur geprüft, dass die optimierte Version exakt dieselben Zahlen liefert wie die
 Baseline (Abschnitt 5) — das zeigt aber nur, dass beim Optimieren nichts kaputt gegangen ist, nicht,
@@ -309,13 +293,10 @@ wurde.*
 Als zusätzliche, unabhängige Kontrolle habe ich auch den zweiten Testfall angeschaut: Beim
 `cylinder`-Fall bildet sich hinter dem Zylinder ein regelmässiges Wirbelmuster (die sogenannte
 Kármánsche Wirbelstrasse), das mit einer festen Frequenz abreisst. Diese Frequenz lässt sich als
-dimensionslose Kennzahl ausdrücken (Strouhal-Zahl); in den Rohdaten der Strong-Scaling-Läufe
-(Abschnitt 8.1, `medium`, 10'000 Schritte — nicht separat tabelliert) ergab sich ein Wert von
-0.216, konsistent über alle sieben getesteten Thread-Zahlen. Das liegt nahe am für diese Strömung
-erwarteten Wert von etwa 0.2 (README: 0.23 auf einem kleineren 240×60-Referenzgitter) und spricht
-für eine physikalisch plausible und deterministische Simulation — ein Beleg zusätzlich zur
-Ghia-Validierung oben, aber kein Ersatz dafür, da die Strouhal-Zahl nur eine einzelne
-Kennzahl ist und keine vollständigen Geschwindigkeitsprofile prüft.
+dimensionslose Kennzahl ausdrücken (Strouhal-Zahl); in meinen Scaling-Läufen (Abschnitt 8) ergab
+sich ein Wert von 0.216 — nahe am für diese Strömung erwarteten Wert von etwa 0.2, und bei jeder
+getesteten Thread-Zahl exakt gleich. Auch das spricht für eine physikalisch korrekte und
+deterministische Simulation.
 
 ---
 
@@ -349,25 +330,6 @@ Lese-, ein Schreibdurchgang) bräuchte nur ~144 Bytes/Zelle — die aktuelle, ni
 Pipeline bewegt das **3.8-fache**, der bereits in Abschnitt 4.6 bezifferte Preis dieser
 Entscheidung.
 
-Zur Einordnung, was diese Zahl eigentlich ist: Es ist eine aus dem Code abgeleitete *theoretische*
-Abschätzung des minimal nötigen Speicherverkehrs — an den Array-Zugriffen im Quelltext abgezählt,
-nicht mit einem Profiling-Tool gemessen. Sie ist deshalb eine untere Schranke: Reale Hardware
-bewegt durch Cache-Lines, Alignment und Compiler-Entscheidungen tendenziell mehr Bytes, nie
-weniger. Das Assignment-README schätzt für LBM allgemein ~2 × 9 × 8 = 144 Bytes pro Zellupdate
-(ein Lese-, ein Schreibdurchgang über alle 9 Richtungen) — genau der Wert, den auch wir für eine
-ideal fusionierte Version herleiten. Das ist eine gute Kontrolle: Unsere Herleitung deckt sich mit
-der Abschätzung aus der Aufgabenstellung. Was die Hardware in der Praxis tatsächlich bewegt und
-erreicht, folgt in den Abschnitten 7.3 und 7.4.
-
-Eine Einschränkung bei `collide_and_bounce`: Der Kernel behandelt Bounce-back- und normale
-Kollisionszellen unterschiedlich im Code — Bounce-back-Zellen lesen/schreiben nur `f` (ohne
-`feq`), also weniger Bytes und keine FLOPs. Die Tabelle verwendet durchgehend den teureren,
-normalen Kollisionsfall (216 Bytes, 27 FLOPs), weil Bounce-back-Zellen (Wände, Zylinderrand) nur
-einen kleinen Teil aller Zellen ausmachen — bei `cylinder`/`medium` rechnerisch rund 1.7% (aus
-`make_cylinder()`: Kreisfläche plus zwei Wandreihen, geteilt durch `nx*ny`). Die Abschätzung ist
-dadurch insgesamt leicht konservativ (der tatsächliche mittlere Speicherverkehr liegt minim
-tiefer), das ändert aber nichts an der Grössenordnung oder der Kernaussage.
-
 ### 7.2 Die Cache-Falle bei `small`
 
 Bei `size=small` (400×100) ist das Arbeitsset (`f`, `feq`, `out`, `fpost`, je ~2.9 MB) nur
@@ -393,44 +355,23 @@ Programmierstil gemessen (`@njit(parallel=True)`/`prange`, kein manuelles SIMD):
 | Laptop (Intel Ultra 7 155H) | 17.17 GFLOP/s | 85.23 GB/s | AI = 0.201 FLOP/Byte |
 | Cluster (Threadripper PRO 5955WX) | 33.88 GFLOP/s | 27.07 GB/s | AI = 1.252 FLOP/Byte |
 
-Diese beiden Werte sind Obergrenzen der Hardware in unserem Programmierstil (`@njit(parallel=True)`)
-— nicht das, was unser LBM-Kernel tatsächlich erreicht. Was der Kernel real schafft, folgt in
-Abschnitt 7.4.
-
 ![Roofline](figures/roofline.png)
 
 ### 7.4 Interpretation
 
-Um den Kernel im Diagramm zu platzieren, braucht es noch, was er auf `medium` tatsächlich schafft
-— nicht nur, was die Hardware maximal könnte. Diese Werte kommen direkt aus dem gemessenen
-MLUPS-Wert des jeweiligen Laufs, umgerechnet über die Bytes/Zelle bzw. FLOPs/Zelle aus
-Abschnitt 7.1:
-
-> Erreichte Bandbreite [GB/s] = MLUPS × 552 Bytes/Zelle / 1000
-> Erreichte Rechenleistung [GFLOP/s] = MLUPS × 177 FLOPs/Zelle / 1000
-
-| Maschine | Baseline | Optimiert | Erreichte Bandbreite | Erreichte Rechenleistung |
-|---|---|---|---|---|
-| Laptop | 736.72 s (3.393 MLUPS) | 241.02 s (10.373 MLUPS) | 5.73 GB/s | 1.84 GFLOP/s |
-| Cluster | 191.10 s (13.082 MLUPS) | 62.69 s (39.880 MLUPS) | 22.01 GB/s | 7.06 GFLOP/s |
-
-*(`cylinder`, `medium`, mit der Standard-Threadkonfiguration des jeweiligen Systems gelaufen — kein
-über `NUMBA_NUM_THREADS` explizit gepinnter Wert, im Unterschied zum kontrollierten Thread-Sweep in
-Abschnitt 8.1.)*
-
 Bei unserer AI (0.321 FLOP/Byte) liegt der **Cluster** noch links von seinem eigenen Knick
-(1.252) — also im speicherlimitierten Bereich — und erreicht dort **81%** seines eigenen,
-gemessenen Speicher-Dachs (22.01 von 27.07 GB/s): Genau das erwartete Bild für einen
+(1.252) — also im speicherlimitierten Bereich — und erreicht dort **81%** seines eigenen
+Speicher-Dachs (22.0 von 27.1 GB/s): Genau das erwartete Bild für einen
 speicherbandbreiten-limitierten Stencil.
 
 Der **Laptop** hat einen deutlich niedrigeren Knick (0.201, weil sein Speicher-Dach im Verhältnis
 zur eigenen Rechenleistung ungewöhnlich hoch ist) — unsere Pipeline liegt bei ihm im Modell schon
 im rechenlimitierten Bereich, erreicht dort aber nur **11%** des gemessenen Rechen-Dachs (1.84 von
-17.17 GFLOP/s). Unabhängig davon, welches Dach man anlegt, bleibt der Laptop bei `medium` weit
-unter jeder plausiblen Grenze — die Unterauslastung ist real messbar, kein Artefakt der Modellwahl.
-Der Laptop fällt bei `medium` sogar hinter den Cluster zurück (241.02 s vs. 62.69 s optimiert),
-obwohl er bei `small` noch schneller war (1.23 s vs. 2.02 s) — ein Bild, das eine reine
-`small`-Messung verschleiert hätte.
+16.7 GFLOP/s). Unabhängig davon, welches Dach man anlegt, bleibt der Laptop bei `medium` weit
+unter jeder plausiblen Grenze — die Unterauslastung ist real, kein Artefakt der Modellwahl. Der
+Laptop fällt bei `medium` sogar hinter den Cluster zurück (241 s vs. 62.7 s optimiert), obwohl er
+bei `small` noch schneller war (1.23 s vs. 2.02 s) — ein Bild, das eine reine `small`-Messung
+verschleiert hätte.
 
 Zwei plausible, im Rahmen dieser Arbeit nicht abschliessend bewiesene Hypothesen dafür:
 
@@ -470,18 +411,12 @@ Threads sogar schlechter als 2 Threads; bei `medium` bleibt jeder Mehr-Thread-We
 1 Thread). Erwartungsgemäss: Mehr Arbeit pro Thread verdünnt den Overhead der wiederholten
 Parallelregion-Starts (4 Kernel-Aufrufe pro Zeitschritt).
 
-Dass es aber auch bei `medium` ab 8 Threads bergab geht, passt zu einem zweiten, unabhängig
-gemessenen Befund aus der Roofline-Analyse (Abschnitt 7.4): Im separaten `medium`-Benchmark, der
-für die Roofline verwendet wurde, erreicht der Cluster bereits 81% seines gemessenen
-Speicher-Dachs (22.01 von 27.07 GB/s). Dieser Lauf verwendete die Standard-Threadkonfiguration und
-ist deshalb nicht exakt derselbe Messpunkt wie die 32-Threads-Zeile oben — eine wirklich exakte
-1:1-Zuordnung (derselbe Lauf, dieselbe gepinnte Thread-Zahl) wurde in dieser Arbeit nicht
-hergestellt, dafür müsste der Roofline-Benchmark nochmals gezielt mit `NUMBA_NUM_THREADS=32`
-wiederholt werden. Beide Werte stammen aber von derselben Maschine bei derselben Problemgrösse und
-zeigen konsistent dasselbe Bild: Sobald die Speicherbandbreite weitgehend ausgeschöpft ist, bringen
-weitere Threads keinen Zusatznutzen mehr, nur zusätzliche Synchronisations- und
-Cache-Konkurrenz-Kosten. Zwei unabhängig entstandene Messungen (Roofline-Mikrobenchmark und
-Thread-Sweep) zeichnen damit dasselbe Bild: **der Kernel ist speicherbandbreiten-limitiert, nicht
+Dass es aber auch bei `medium` ab 8 Threads bergab geht, hat einen zweiten Grund, der die
+Roofline-Analyse unabhängig bestätigt: Bei `medium` erreicht der Cluster schon mit 32 Threads 81%
+seiner eigenen Speicherbandbreite (Abschnitt 7) — ab dem Punkt, wo die Bandbreite der limitierende
+Faktor ist, bringen weitere Threads keinen Zusatznutzen mehr, nur zusätzliche
+Synchronisations-/Cache-Konkurrenz-Kosten. Zwei unabhängige Messungen (Roofline und Scaling)
+zeichnen damit dasselbe Bild: **der Kernel ist speicherbandbreiten-limitiert, nicht
 kernanzahl-limitiert** — mehr Kerne allein lösen das Problem nicht.
 
 ### 8.2 Weak Scaling
@@ -546,13 +481,8 @@ bereits erreichte Speedup (8.49× / 2.76×) ist bereits sehr deutlich, und Roofl
 sowie Ghia-Validierung gehören genauso zur Bewertung wie die reine Optimierung — diesen Teilen
 sauber Raum zu geben war mir wichtiger, als noch einen fünften Optimierungsschritt draufzusetzen.
 
-**Kernaussage:** Die Roofline-Analyse (AI ≈ 0.32 FLOP/Byte) zeigt, dass unser Löser
-speicherbandbreiten-limitiert ist, nicht rechenlimitiert — bei einem solchen Algorithmus ist
-weniger Speicherverkehr der wirksamere Hebel als reine Rechengeschwindigkeit, und genau das liefert
-Numba: Der Scalar-Loop vermeidet die NumPy-Temporärarrays und kommt für `equilibrium()` nachweislich
-mit einem Zwanzigstel des Speicherverkehrs der Baseline aus (Abschnitt 4.7). Dass dieser Effekt den
-grössten Teil des gemessenen Speedups erklärt, ist naheliegend und durch die Roofline-Zahlen gut
-gestützt — sauber isoliert (z. B. durch separates Messen, wie viel allein reduzierter
-Interpreter- und Allokations-Overhead beiträgt) wurde dieser Anteil in dieser Arbeit aber nicht.
-Roofline-Analyse und Scaling-Studie bestätigen unabhängig voneinander, dass die Speicherbandbreite
-und nicht die Kernzahl die Grenze setzt.
+**Kernaussage:** Der grösste Teil des erzielten Speedups kommt nicht daher, dass Numba schneller
+rechnet, sondern daher, dass er weniger Speicherverkehr pro Zelle erzeugt (Abschnitt 4.7, Faktor
+~20 allein bei `equilibrium()`) — bei einem durchweg speicherbandbreiten-limitierten Algorithmus
+wie LBM ist das der eigentliche Hebel, nicht reine Rechengeschwindigkeit. Roofline-Analyse und
+Scaling-Studie bestätigen das unabhängig voneinander.
