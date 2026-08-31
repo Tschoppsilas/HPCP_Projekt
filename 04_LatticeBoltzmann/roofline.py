@@ -30,8 +30,8 @@ machines = {
         "color": "tab:blue",
     },
     "Cluster (Threadripper PRO 5955WX)": {
-        "mlups": 39.880,
-        "stream_gbs_raw": 20.30,
+        "mlups": 53.892,
+        "stream_gbs_raw": 33.18,
         "compute_gflops": 33.88,
         "color": "tab:orange",
     },

@@ -391,11 +391,20 @@ Programmierstil gemessen (`@njit(parallel=True)`/`prange`, kein manuelles SIMD):
 | Maschine | Rechen-Dach | Speicher-Dach (korrigiert) | Ridge Point |
 |---|---|---|---|
 | Laptop (Intel Ultra 7 155H) | 17.17 GFLOP/s | 85.23 GB/s | AI = 0.201 FLOP/Byte |
-| Cluster (Threadripper PRO 5955WX) | 33.88 GFLOP/s | 27.07 GB/s | AI = 1.252 FLOP/Byte |
+| Cluster (Threadripper PRO 5955WX) | 33.88 GFLOP/s | 44.24 GB/s | AI = 0.766 FLOP/Byte |
+
+*(Cluster-Speicher-Dach aus zwei Läufen an einem späteren Cluster-Termin: 44.32 / 44.16 GB/s
+korrigiert, Mittelwert 44.24 GB/s. Eine frühere Messung an einem anderen Termin hatte 27.07 GB/s
+ergeben — deutlich weniger. Da `pub030` ein geteilter JupyterHub-Cluster ist, liegt die
+naheliegende Erklärung in unterschiedlicher Auslastung durch andere Nutzer zum jeweiligen
+Messzeitpunkt, nicht in einem Rechenfehler; die Gegenprobe dazu folgt in Abschnitt 7.4. Verwendet
+wird hier die neuere, zweifach reproduzierte Messung.)*
 
 Diese beiden Werte sind Obergrenzen der Hardware in unserem Programmierstil (`@njit(parallel=True)`)
 — nicht das, was unser LBM-Kernel tatsächlich erreicht. Was der Kernel real schafft, folgt in
-Abschnitt 7.4.
+Abschnitt 7.4. Das Rechen-Dach wurde nicht zu einem zweiten Zeitpunkt erneut gemessen; falls
+Cluster-Auslastung auch dieses beeinflusst, ist der hier verwendete Wert (33.88 GFLOP/s) mit
+derselben Vorsicht zu lesen wie ursprünglich das Speicher-Dach.
 
 ![Roofline](figures/roofline.png)
 
@@ -412,23 +421,41 @@ Abschnitt 7.1:
 | Maschine | Baseline | Optimiert | Erreichte Bandbreite | Erreichte Rechenleistung |
 |---|---|---|---|---|
 | Laptop | 736.72 s (3.393 MLUPS) | 241.02 s (10.373 MLUPS) | 5.73 GB/s | 1.84 GFLOP/s |
-| Cluster | 191.10 s (13.082 MLUPS) | 62.69 s (39.880 MLUPS) | 22.01 GB/s | 7.06 GFLOP/s |
+| Cluster | 191.10 s (13.082 MLUPS) | 46.39 s (53.892 MLUPS) | 29.75 GB/s | 9.54 GFLOP/s |
 
-*(`cylinder`, `medium`, mit der Standard-Threadkonfiguration des jeweiligen Systems gelaufen — kein
-über `NUMBA_NUM_THREADS` explizit gepinnter Wert, im Unterschied zum kontrollierten Thread-Sweep in
+*(`cylinder`, `medium`. Die Laptop-Zeile lief mit der Standard-Threadkonfiguration des Systems. Die
+Cluster-Zeile ist der Mittelwert aus zwei Wiederholungen mit explizit auf 32 gepinntem
+`NUMBA_NUM_THREADS` (46.20 s / 54.114 MLUPS und 46.58 s / 53.671 MLUPS, ~0.8% Abweichung
+zueinander — reproduzierbar) und ist damit direkt vergleichbar mit der 32-Threads-Zeile aus
 Abschnitt 8.1.)*
 
+**Eine kurze Anmerkung zur Cluster-Messung, weil sie sich vom ursprünglichen Wert unterscheidet:**
+Die erste Messung auf `medium` (ohne explizit gepinnte Threads) hatte 62.69 s / 39.880 MLUPS
+ergeben. Um zu prüfen, ob das exakt der 32-Threads-Zeile in Abschnitt 8.1 entspricht, wurde
+nachträglich zusätzlich geprüft, dass Numba auf diesem Cluster-Knoten standardmässig ohnehin 32
+Threads verwendet (`numba.get_num_threads()` bestätigt das) — der Unterschied liegt also nicht an
+der Thread-Zahl. Ein zweiter, gepinnter Lauf ergab aber deutlich mehr Durchsatz (53.9 statt
+39.880 MLUPS), und auch das gleichzeitig neu gemessene Speicher-Dach lag klar höher als beim ersten
+Mal (Abschnitt 7.3). Die naheliegende, aber nicht unabhängig bewiesene Erklärung: `pub030` ist ein
+von mehreren Studierenden geteilter Cluster-Knoten, und die verfügbare Bandbreite hing vom
+jeweiligen Messzeitpunkt ab, nicht von einem Fehler in der Messmethode. Für den Rest dieses
+Abschnitts wird deshalb die neuere, zweifach reproduzierte Messung verwendet — sie ist zudem in
+sich konsistent (das Erreichte liegt unter dem gleichzeitig gemessenen Dach), während die
+ursprüngliche Kombination aus altem Dach und neuem Durchsatz das nicht gewesen wäre.
+
 Bei unserer AI (0.321 FLOP/Byte) liegt der **Cluster** noch links von seinem eigenen Knick
-(1.252) — also im speicherlimitierten Bereich — und erreicht dort **81%** seines eigenen,
-gemessenen Speicher-Dachs (22.01 von 27.07 GB/s): Genau das erwartete Bild für einen
-speicherbandbreiten-limitierten Stencil.
+(0.766) — also im speicherlimitierten Bereich — und erreicht dort **67%** seines eigenen,
+gemessenen Speicher-Dachs (29.75 von 44.24 GB/s): Das erwartete Bild für einen
+speicherbandbreiten-limitierten Stencil, auch wenn die Auslastung mit dem neu gemessenen,
+höheren Dach tiefer ausfällt als ursprünglich berechnet (vorher 81% gegen das ältere,
+tieferere Dach).
 
 Der **Laptop** hat einen deutlich niedrigeren Knick (0.201, weil sein Speicher-Dach im Verhältnis
 zur eigenen Rechenleistung ungewöhnlich hoch ist) — unsere Pipeline liegt bei ihm im Modell schon
 im rechenlimitierten Bereich, erreicht dort aber nur **11%** des gemessenen Rechen-Dachs (1.84 von
 17.17 GFLOP/s). Unabhängig davon, welches Dach man anlegt, bleibt der Laptop bei `medium` weit
 unter jeder plausiblen Grenze — die Unterauslastung ist real messbar, kein Artefakt der Modellwahl.
-Der Laptop fällt bei `medium` sogar hinter den Cluster zurück (241.02 s vs. 62.69 s optimiert),
+Der Laptop fällt bei `medium` sogar hinter den Cluster zurück (241.02 s vs. 46.39 s optimiert),
 obwohl er bei `small` noch schneller war (1.23 s vs. 2.02 s) — ein Bild, das eine reine
 `small`-Messung verschleiert hätte.
 
@@ -471,18 +498,27 @@ Threads sogar schlechter als 2 Threads; bei `medium` bleibt jeder Mehr-Thread-We
 Parallelregion-Starts (4 Kernel-Aufrufe pro Zeitschritt).
 
 Dass es aber auch bei `medium` ab 8 Threads bergab geht, passt zu einem zweiten, unabhängig
-gemessenen Befund aus der Roofline-Analyse (Abschnitt 7.4): Im separaten `medium`-Benchmark, der
-für die Roofline verwendet wurde, erreicht der Cluster bereits 81% seines gemessenen
-Speicher-Dachs (22.01 von 27.07 GB/s). Dieser Lauf verwendete die Standard-Threadkonfiguration und
-ist deshalb nicht exakt derselbe Messpunkt wie die 32-Threads-Zeile oben — eine wirklich exakte
-1:1-Zuordnung (derselbe Lauf, dieselbe gepinnte Thread-Zahl) wurde in dieser Arbeit nicht
-hergestellt, dafür müsste der Roofline-Benchmark nochmals gezielt mit `NUMBA_NUM_THREADS=32`
-wiederholt werden. Beide Werte stammen aber von derselben Maschine bei derselben Problemgrösse und
-zeigen konsistent dasselbe Bild: Sobald die Speicherbandbreite weitgehend ausgeschöpft ist, bringen
-weitere Threads keinen Zusatznutzen mehr, nur zusätzliche Synchronisations- und
-Cache-Konkurrenz-Kosten. Zwei unabhängig entstandene Messungen (Roofline-Mikrobenchmark und
-Thread-Sweep) zeichnen damit dasselbe Bild: **der Kernel ist speicherbandbreiten-limitiert, nicht
-kernanzahl-limitiert** — mehr Kerne allein lösen das Problem nicht.
+gemessenen Befund aus der Roofline-Analyse (Abschnitt 7.4): Der `medium`-Benchmark mit explizit auf
+32 gepinnten Threads — dieselbe Konfiguration wie die 32-Threads-Zeile oben — erreicht auf dem
+Cluster 67% seines gemessenen Speicher-Dachs (29.75 von 44.24 GB/s). Sobald die Speicherbandbreite
+einen grossen Teil ihrer Kapazität ausschöpft, bringen weitere Threads keinen Zusatznutzen mehr, nur
+zusätzliche Synchronisations- und Cache-Konkurrenz-Kosten. Zwei unabhängig entstandene Messungen
+(Roofline-Mikrobenchmark und Thread-Sweep) zeichnen damit dasselbe Bild: **der Kernel ist
+speicherbandbreiten-limitiert, nicht kernanzahl-limitiert** — mehr Kerne allein lösen das Problem
+nicht.
+
+Eine ehrliche Einschränkung dazu, die erst bei der Nachmessung für Abschnitt 7.4 auffiel: Die
+absolute Laufzeit dieser 32-Threads-Zeile (191.10 s / 2.39× ≈ 80 s optimiert, gemessen in der
+ursprünglichen Scaling-Sitzung) stimmt nicht mit der neuen, separat gemessenen 46.39 s überein —
+obwohl beide Läufe exakt dieselbe Konfiguration verwenden (`--case cylinder --size medium`,
+`NUMBA_NUM_THREADS=32`, siehe `scaling_strong_medium.sh`). Das ist derselbe Effekt wie beim
+Speicher-Dach in Abschnitt 7.3: Auf einem geteilten Cluster können zwei an unterschiedlichen Tagen
+gemessene absolute Laufzeiten spürbar auseinanderliegen. Die *Speedup-Werte* in der Tabelle oben
+bleiben davon vermutlich weniger betroffen, weil Baseline und optimierte Version jeweils kurz
+hintereinander in derselben Sitzung gemessen wurden — das wurde in dieser Arbeit aber nicht
+systematisch für alle Zeilen der Scaling-Studie erneut geprüft. Für eine vollständig
+belastbare Studie müsste die ganze Sweep-Serie in einer einzigen, ununterbrochenen Sitzung
+wiederholt werden; das war im Rahmen dieser Arbeit zeitlich nicht mehr möglich.
 
 ### 8.2 Weak Scaling
 
@@ -534,7 +570,20 @@ frühzeitig aufgedeckt (fehlendes Warm-up bei `macroscopic()` in Schritt 3 und b
 `collide_and_bounce()` in Schritt 5), die sonst zu falschen Schlüssen über die Performance geführt
 hätten. Die Entscheidung, konsequent zwei Maschinen zu messen, hat mehrfach ein Bild aufgedeckt,
 das eine einzelne Maschine verschleiert hätte — am deutlichsten beim Rollentausch zwischen `small`
-und `medium` (Laptop erst schneller, dann klar langsamer als der Cluster).
+und `medium` (Laptop erst schneller, dann klar langsamer als der Cluster). Dieselbe Disziplin hat
+sich noch ein drittes Mal ausgezahlt, ganz am Schluss beim Schreiben dieses Reports: Ein
+scheinbar unauffälliger Wert (die erreichte Bandbreite auf `medium`, Abschnitt 7.4) lag rechnerisch
+über dem zuvor gemessenen Speicher-Dach — logisch unmöglich. Erst das Nachmessen deckte auf, dass
+`pub030` als geteilter Cluster-Knoten je nach Tageszeit spürbar unterschiedliche Bandbreite zur
+Verfügung stellt (Abschnitt 7.3, 7.4, 8.1), was auch erklärt, warum eine einzelne, isoliert
+gemessene Zahl auf diesem System nie ganz ohne Vorbehalt stehen sollte. Diese Auslastungsschwankung
+wurde erst spät entdeckt, entsprechend spät im Projekt, um sie auch für die fünf Optimierungsschritte
+in Abschnitt 4 systematisch gegenzuprüfen — auch diese Cluster-Zahlen wurden an unterschiedlichen
+Tagen gemessen und wurden nicht nochmals wiederholt. Die grossen, klar erkennbaren Effekte dort
+(z. B. der Sprung auf 8.49× / 2.76× in Schritt 5) sind davon vermutlich nicht betroffen, da Effekte
+dieser Grössenordnung eine Auslastungsschwankung von 20–30% klar überstehen; einzelne
+Zwischenschritte mit kleineren, knapperen Unterschieden (z. B. Schritt 1 auf dem Cluster, 0.85×)
+könnten dagegen etwas ungenauer sein, als die einzelne Nachkommastelle suggeriert.
 
 **Was nicht ideal lief, und warum die Entscheidung trotzdem richtig war:** Die vollständige
 Kernel-Fusion (alle vier Funktionen zu einem einzigen Durchgang) habe ich bewusst nicht mehr
