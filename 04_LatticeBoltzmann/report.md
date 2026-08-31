@@ -21,10 +21,10 @@ alle vier Kernfunktionen des Lösers (`equilibrium`, `macroscopic`, `stream`,
 `collide_and_bounce`). Die Wahl baut direkt auf dem Kursmaterial (`01_Python/03_Numba.ipynb`) auf
 und benötigt kein GPU-Setup.
 
-Gemessen wurde durchgehend auf zwei Maschinen: Einem lokalen Windows-Laptop (Intel Core Ultra 7
+Gemessen habe ich durchgehend auf zwei Maschinen: Einem lokalen Windows-Laptop (Intel Core Ultra 7
 155H, 16 Kerne / 22 logische Prozessoren) und dem FHNW-Cluster `pub030` (JupyterHub-Knoten
 `calc-g-jhub`, AMD Ryzen Threadripper PRO 5955WX, 16 Kerne / 32 Threads). Wo die beiden Maschinen
-unterschiedliche Ergebnisse liefern, wird das explizit diskutiert statt geglättet — das ist Teil
+unterschiedliche Ergebnisse liefern, diskutiere ich das explizit statt es zu glätten — das ist Teil
 der Erkenntnisse dieser Arbeit.
 
 ---
@@ -51,7 +51,7 @@ das nicht mehr braucht.
 Zusätzlich zeigt sich beim direkten Maschinenvergleich: Dieselbe Baseline (`cylinder`, `small`)
 läuft auf dem Cluster bereits ~1.9× schneller als auf dem Laptop (5.58 s vs. 10.45 s) — ganz ohne
 jede Optimierung. Die naheliegende Erklärung ist unterschiedliche Hardware und möglicherweise ein
-unterschiedlich vektorisierter NumPy-Build; das wurde in dieser Arbeit aber nicht direkt geprüft
+unterschiedlich vektorisierter NumPy-Build; das habe ich in dieser Arbeit aber nicht direkt geprüft
 (z. B. über `np.show_config()`) und bleibt deshalb eine plausible, nicht verifizierte Vermutung. Für
 das weitere Vorgehen folgt trotzdem klar daraus: **vergleichbar sind Speedup-Faktoren, nicht
 absolute Laufzeiten über Maschinen hinweg**, und die abschliessend berichteten Zahlen sollten von
@@ -74,7 +74,7 @@ inhaltliche Erklärung gesucht wird (siehe Abschnitt 4.3).
 
 ### 4.1 Schritt 1 — `@njit` auf `equilibrium()`, Funktionskörper unverändert
 
-Nur der Decorator wurde ergänzt, der Code blieb ein Python-Loop über die 9 Gitterrichtungen mit
+Ich habe nur den Decorator ergänzt, der Code blieb ein Python-Loop über die 9 Gitterrichtungen mit
 vollen NumPy-Array-Ausdrücken pro Iteration (`cu = 3.0 * (C[i,0]*ux + C[i,1]*uy)` usw.).
 
 | Maschine | Baseline | Schritt 1 | Speedup |
@@ -90,7 +90,7 @@ Code bleibt im Kern "auf ganzen Arrays mit Temporären rechnen" — das tritt di
 eigene, vektorisierte Elementweise-Operationen an. Auf dem Cluster könnte ein gut vektorisierter
 NumPy-Build diesen Wettkampf für sich entscheiden; auf dem Laptop wäre denkbar, dass NumPys
 Overhead pro Aufruf und Temporär-Array relativ stärker ins Gewicht fällt, weshalb Numba dort schon
-in dieser einfachen Form half. Diese Erklärung passt zum beobachteten Muster, wurde aber nicht
+in dieser einfachen Form half. Diese Erklärung passt zum beobachteten Muster, habe ich aber nicht
 separat gemessen (z. B. über einen Vergleich der NumPy-Vektorisierung auf beiden Maschinen) — sie
 bleibt eine Hypothese, kein nachgewiesener Mechanismus.
 
@@ -100,7 +100,7 @@ Array-Ausdrücke.
 
 ### 4.2 Schritt 2 — Umbau zu explizitem Scalar-Loop mit `prange`
 
-`equilibrium()` wurde zu `for x in prange(nx): for y in range(ny): ...` umgebaut, mit rein
+Ich habe `equilibrium()` zu `for x in prange(nx): for y in range(ny): ...` umgebaut, mit rein
 skalarer Rechnung pro Zelle statt Array-Ausdrücken.
 
 | Maschine | Baseline | Schritt 1 | Schritt 2 |
@@ -110,7 +110,7 @@ skalarer Rechnung pro Zelle statt Array-Ausdrücken.
 
 Das Bild kehrt sich zwischen den Maschinen um. 
 
-**Eine erste Hypothese (Parallel-Dispatch-Overhead skaliert mit der Kernzahl:** Laptop 22 logische Prozessoren vs. Cluster 32 Kerne) wurde anhand der
+**Eine erste Hypothese (Parallel-Dispatch-Overhead skaliert mit der Kernzahl:** Laptop 22 logische Prozessoren vs. Cluster 32 Kerne) habe ich anhand der
 tatsächlichen Kernzahlen verworfen — der Unterschied (Faktor ~1.45) ist zu klein, um einen so
 starken Umschwung zu erklären. 
 
@@ -123,8 +123,8 @@ sich in Abschnitt 7 (Roofline) mit echten Messungen bestätigt.
 
 Gleiches Muster wie bei `equilibrium()`. **Wichtiger Fund unterwegs:** `macroscopic()` wird — anders
 als `equilibrium()` — zum ersten Mal *innerhalb* der Zeitschritt-Schleife aufgerufen, also nach
-dem Start der Zeitmessung. Ohne einen expliziten Warm-up-Aufruf davor wurde beim ersten
-Schleifendurchlauf die JIT-Kompilierzeit mitgemessen:
+dem Start der Zeitmessung. Ohne einen expliziten Warm-up-Aufruf davor habe ich beim ersten
+Schleifendurchlauf ungewollt die JIT-Kompilierzeit mitgemessen:
 
 | Maschine | Schritt 2 | + macroscopic, **ohne** Warm-up-Fix | + macroscopic, **mit** Warm-up-Fix |
 |---|---|---|---|
@@ -136,12 +136,13 @@ echter Parallelisierungs-Overhead.
 
 **Lehre fürs weitere Vorgehen:** Ein unerwartetes Ergebnis zuerst
 auf einen Mess-Fehler prüfen (hier: Fehlendes Warm-up), bevor eine inhaltliche Erklärung gesucht
-wird — dieselbe Disziplin wurde bei `collide_and_bounce` in Schritt 5 direkt angewendet.
+wird — dieselbe Disziplin habe ich bei `collide_and_bounce` in Schritt 5 direkt angewendet.
 
 ### 4.4 Schritt 4 — `stream()`: Der bisher klarste Gewinn
 
-Ersetzt wurden zwei verschachtelte `np.roll`-Aufrufe (die laut Docstring der Baseline "the single
-biggest source of memory traffic in the whole solver" sind) durch direkte Indexberechnung:
+Ich habe zwei verschachtelte `np.roll`-Aufrufe (die laut Docstring der Baseline "the single
+biggest source of memory traffic in the whole solver" sind) durch direkte Indexberechnung
+ersetzt:
 `src = (x - C[i]) % n`, keine Zwischenkopie.
 
 | Maschine | Schritt 3 | Schritt 4 | Speedup gesamt |
@@ -155,7 +156,7 @@ Baseline-Analyse, in der `np.roll` ~65% der `stream()`-Zeit ausmachte.
 ### 4.5 Schritt 5 — Fusion von Kollision und Bounce-back
 
 `fpost = f - omega*(f-feq)` und die separate Bounce-back-Schleife (boolesches Fancy-Indexing,
-bekannt für schlechten, nicht-zusammenhängenden Speicherzugriff) wurden zu einer Funktion
+bekannt für schlechten, nicht-zusammenhängenden Speicherzugriff) habe ich zu einer Funktion
 `collide_and_bounce()` fusioniert: Pro Zelle wird direkt entschieden, ob Bounce-back oder normale
 BGK-Kollision gilt, ohne Zwischen-Array.
 
@@ -233,7 +234,7 @@ Schritte 1, 2, 4 und 5 ist die Übereinstimmung sogar **bit-identisch** (`max re
 erwartbar, da keine dieser Umformungen die Reihenfolge von Gleitkomma-Reduktionen ändert. Auch
 Schritt 3 (`macroscopic`) bleibt exakt.
 
-Der `cavity`-Fall, mit der vollen optimierten Pipeline nie vorher getestet, wurde separat
+Den `cavity`-Fall, mit der vollen optimierten Pipeline nie vorher getestet, habe ich separat
 verifiziert:
 
 | Maschine | Baseline | Optimiert | Speedup | Korrektheit |
@@ -241,7 +242,7 @@ verifiziert:
 | Laptop | 11.34 s (7.055 MLUPS) | 1.52 s (52.593 MLUPS) | 7.46× | OK |
 | Cluster | 5.20 s (15.372 MLUPS) | 2.06 s (38.878 MLUPS) | 2.52× | OK |
 
-Für die Ghia-Validierung (Abschnitt 6) wurde zusätzlich ein quadratisches 128×128-Gitter
+Für die Ghia-Validierung (Abschnitt 6) habe ich zusätzlich ein quadratisches 128×128-Gitter
 (Re = 100, 20'000 Steps) geprüft: Baseline und optimierte Version liefern auch dort
 bit-identische Felder (`ux`, `uy`, `rho` alle `PASS`, `max rel err 0.000e+00`).
 
@@ -257,7 +258,7 @@ Artefakt in der optimierten Version nicht unkontrolliert grösser geworden ist.
 
 ## 6. Physikalische Validierung: Vergleich mit einer unabhängigen Referenz (Ghia et al., 1982)
 
-Bisher wurde nur geprüft, dass die optimierte Version exakt dieselben Zahlen liefert wie die
+Bisher habe ich nur geprüft, dass die optimierte Version exakt dieselben Zahlen liefert wie die
 Baseline (Abschnitt 5) — das zeigt aber nur, dass beim Optimieren nichts kaputt gegangen ist, nicht,
 dass die Simulation überhaupt physikalisch richtig rechnet. Dafür braucht es einen Vergleich mit
 einer Quelle ausserhalb des eigenen Codes.
@@ -301,8 +302,8 @@ erwartet, kein Hinweis auf einen Fehler.
 
 *Die durchgezogene Linie ist meine Simulation, die Punkte sind die Ghia-Referenzwerte. Ein kleiner
 technischer Hinweis zum Plot: Der Datenexport der Baseline setzt den Geschwindigkeitswert direkt am
-Deckel fälschlicherweise auf 0 (ein Nebeneffekt der Randbedingungs-Maskierung) — für den Plot wurde
-dieser eine Punkt deshalb auf den bekannten, tatsächlichen Wert (u = u0, also 1.0) korrigiert. Die
+Deckel fälschlicherweise auf 0 (ein Nebeneffekt der Randbedingungs-Maskierung) — für den Plot habe
+ich diesen einen Punkt deshalb auf den bekannten, tatsächlichen Wert (u = u0, also 1.0) korrigiert. Die
 Tabelle oben war davon nicht betroffen, weil dieser Randpunkt dort von vornherein nicht mitgezählt
 wurde.*
 
@@ -327,7 +328,7 @@ Die arithmetische Intensität (kurz AI) beschreibt das Verhältnis zwischen Rech
 Speicherverkehr: Wie viele Rechenoperationen (FLOPs) ein Programm pro Byte durchführt, das es aus
 dem Speicher liest oder dorthin schreibt. Ist die AI hoch, verbringt ein Programm die meiste Zeit
 mit Rechnen (rechenlimitiert); ist sie tief, verbringt es die meiste Zeit damit, auf Daten aus dem
-Speicher zu warten (speicherlimitiert). Diese eine Zahl braucht es zuerst, bevor sich unser Löser
+Speicher zu warten (speicherlimitiert). Diese eine Zahl braucht es zuerst, bevor sich mein Löser
 im Roofline-Diagramm weiter unten einordnen lässt.
 
 Von Hand aus den vier Kernfunktionen hergeleitet — gleiches Vorgehen wie in Abschnitt 4.7: Zeile
@@ -342,7 +343,7 @@ anfallen:
 | `collide_and_bounce` | 216 | 27 |
 | **Summe** | **552** | **177** |
 
-**AI = 177 / 552 ≈ 0.32 FLOP/Byte** — ein sehr tiefer Wert: Unser Löser verbringt also die
+**AI = 177 / 552 ≈ 0.32 FLOP/Byte** — ein sehr tiefer Wert: Mein Löser verbringt also die
 meiste Zeit mit Warten auf Speicherzugriffe, nicht mit Rechnen. Das bestätigt die im README
 beschriebene Speicherbandbreiten-Limitierung von LBM. Eine ideal fusionierte Implementierung (ein
 Lese-, ein Schreibdurchgang) bräuchte nur ~144 Bytes/Zelle — die aktuelle, nicht fusionierte
@@ -354,8 +355,8 @@ Abschätzung des minimal nötigen Speicherverkehrs — an den Array-Zugriffen im
 nicht mit einem Profiling-Tool gemessen. Sie ist deshalb eine untere Schranke: Reale Hardware
 bewegt durch Cache-Lines, Alignment und Compiler-Entscheidungen tendenziell mehr Bytes, nie
 weniger. Das Assignment-README schätzt für LBM allgemein ~2 × 9 × 8 = 144 Bytes pro Zellupdate
-(ein Lese-, ein Schreibdurchgang über alle 9 Richtungen) — genau der Wert, den auch wir für eine
-ideal fusionierte Version herleiten. Das ist eine gute Kontrolle: Unsere Herleitung deckt sich mit
+(ein Lese-, ein Schreibdurchgang über alle 9 Richtungen) — genau der Wert, den auch ich für eine
+ideal fusionierte Version herleite. Das ist eine gute Kontrolle: Meine Herleitung deckt sich mit
 der Abschätzung aus der Aufgabenstellung. Was die Hardware in der Praxis tatsächlich bewegt und
 erreicht, folgt in den Abschnitten 7.3 und 7.4.
 
@@ -374,12 +375,12 @@ Bei `size=small` (400×100) ist das Arbeitsset (`f`, `feq`, `out`, `fpost`, je ~
 ~12.5 MB gross — passt auf **beiden** Maschinen komplett in den L3-Cache (Laptop 24 MB, Cluster
 64 MB). Die daraus berechnete "erreichte Bandbreite" lag deshalb sogar leicht über der
 tatsächlichen DRAM-Bandbreite — kein Fehler, sondern ein Cache-Effekt. Für eine ehrliche Roofline
-wurde deshalb `medium` verwendet (Arbeitsset ~78 MB, grösser als der L3-Cache auf beiden
+habe ich deshalb `medium` verwendet (Arbeitsset ~78 MB, grösser als der L3-Cache auf beiden
 Maschinen).
 
 ### 7.3 Gemessene Dächer
 
-Statt Datenblatt-Werten wurden beide "Dächer" mit eigenen Mikrobenchmarks im selben
+Statt Datenblatt-Werten habe ich beide "Dächer" mit eigenen Mikrobenchmarks im selben
 Programmierstil gemessen (`@njit(parallel=True)`/`prange`, kein manuelles SIMD):
 
 - **Speicher-Dach** (`stream_bench.py`): STREAM-Triad, N = 100 Mio. Elemente, plus Korrektur um
@@ -397,12 +398,12 @@ Programmierstil gemessen (`@njit(parallel=True)`/`prange`, kein manuelles SIMD):
 korrigiert, Mittelwert 44.24 GB/s. Eine frühere Messung an einem anderen Termin hatte 27.07 GB/s
 ergeben — deutlich weniger. Da `pub030` ein geteilter JupyterHub-Cluster ist, liegt die
 naheliegende Erklärung in unterschiedlicher Auslastung durch andere Nutzer zum jeweiligen
-Messzeitpunkt, nicht in einem Rechenfehler; die Gegenprobe dazu folgt in Abschnitt 7.4. Verwendet
-wird hier die neuere, zweifach reproduzierte Messung.)*
+Messzeitpunkt, nicht in einem Rechenfehler; die Gegenprobe dazu folgt in Abschnitt 7.4. Ich
+verwende hier die neuere, zweifach reproduzierte Messung.)*
 
-Diese beiden Werte sind Obergrenzen der Hardware in unserem Programmierstil (`@njit(parallel=True)`)
-— nicht das, was unser LBM-Kernel tatsächlich erreicht. Was der Kernel real schafft, folgt in
-Abschnitt 7.4. Das Rechen-Dach wurde nicht zu einem zweiten Zeitpunkt erneut gemessen; falls
+Diese beiden Werte sind Obergrenzen der Hardware in meinem Programmierstil (`@njit(parallel=True)`)
+— nicht das, was mein LBM-Kernel tatsächlich erreicht. Was der Kernel real schafft, folgt in
+Abschnitt 7.4. Das Rechen-Dach habe ich nicht zu einem zweiten Zeitpunkt erneut gemessen; falls
 Cluster-Auslastung auch dieses beeinflusst, ist der hier verwendete Wert (33.88 GFLOP/s) mit
 derselben Vorsicht zu lesen wie ursprünglich das Speicher-Dach.
 
@@ -431,7 +432,7 @@ Abschnitt 8.1.)*
 
 **Eine kurze Anmerkung zur Cluster-Messung, weil sie sich vom ursprünglichen Wert unterscheidet:**
 Die erste Messung auf `medium` (ohne explizit gepinnte Threads) hatte 62.69 s / 39.880 MLUPS
-ergeben. Um zu prüfen, ob das exakt der 32-Threads-Zeile in Abschnitt 8.1 entspricht, wurde
+ergeben. Um zu prüfen, ob das exakt der 32-Threads-Zeile in Abschnitt 8.1 entspricht, habe ich
 nachträglich zusätzlich geprüft, dass Numba auf diesem Cluster-Knoten standardmässig ohnehin 32
 Threads verwendet (`numba.get_num_threads()` bestätigt das) — der Unterschied liegt also nicht an
 der Thread-Zahl. Ein zweiter, gepinnter Lauf ergab aber deutlich mehr Durchsatz (53.9 statt
@@ -439,11 +440,11 @@ der Thread-Zahl. Ein zweiter, gepinnter Lauf ergab aber deutlich mehr Durchsatz 
 Mal (Abschnitt 7.3). Die naheliegende, aber nicht unabhängig bewiesene Erklärung: `pub030` ist ein
 von mehreren Studierenden geteilter Cluster-Knoten, und die verfügbare Bandbreite hing vom
 jeweiligen Messzeitpunkt ab, nicht von einem Fehler in der Messmethode. Für den Rest dieses
-Abschnitts wird deshalb die neuere, zweifach reproduzierte Messung verwendet — sie ist zudem in
+Abschnitts verwende ich deshalb die neuere, zweifach reproduzierte Messung — sie ist zudem in
 sich konsistent (das Erreichte liegt unter dem gleichzeitig gemessenen Dach), während die
 ursprüngliche Kombination aus altem Dach und neuem Durchsatz das nicht gewesen wäre.
 
-Bei unserer AI (0.321 FLOP/Byte) liegt der **Cluster** noch links von seinem eigenen Knick
+Bei meiner AI (0.321 FLOP/Byte) liegt der **Cluster** noch links von seinem eigenen Knick
 (0.766) — also im speicherlimitierten Bereich — und erreicht dort **67%** seines eigenen,
 gemessenen Speicher-Dachs (29.75 von 44.24 GB/s): Das erwartete Bild für einen
 speicherbandbreiten-limitierten Stencil, auch wenn die Auslastung mit dem neu gemessenen,
@@ -451,7 +452,7 @@ höheren Dach tiefer ausfällt als ursprünglich berechnet (vorher 81% gegen das
 tieferere Dach).
 
 Der **Laptop** hat einen deutlich niedrigeren Knick (0.201, weil sein Speicher-Dach im Verhältnis
-zur eigenen Rechenleistung ungewöhnlich hoch ist) — unsere Pipeline liegt bei ihm im Modell schon
+zur eigenen Rechenleistung ungewöhnlich hoch ist) — meine Pipeline liegt bei ihm im Modell schon
 im rechenlimitierten Bereich, erreicht dort aber nur **11%** des gemessenen Rechen-Dachs (1.84 von
 17.17 GFLOP/s). Unabhängig davon, welches Dach man anlegt, bleibt der Laptop bei `medium` weit
 unter jeder plausiblen Grenze — die Unterauslastung ist real messbar, kein Artefakt der Modellwahl.
@@ -515,7 +516,7 @@ obwohl beide Läufe exakt dieselbe Konfiguration verwenden (`--case cylinder --s
 Speicher-Dach in Abschnitt 7.3: Auf einem geteilten Cluster können zwei an unterschiedlichen Tagen
 gemessene absolute Laufzeiten spürbar auseinanderliegen. Die *Speedup-Werte* in der Tabelle oben
 bleiben davon vermutlich weniger betroffen, weil Baseline und optimierte Version jeweils kurz
-hintereinander in derselben Sitzung gemessen wurden — das wurde in dieser Arbeit aber nicht
+hintereinander in derselben Sitzung gemessen wurden — das habe ich in dieser Arbeit aber nicht
 systematisch für alle Zeilen der Scaling-Studie erneut geprüft. Für eine vollständig
 belastbare Studie müsste die ganze Sweep-Serie in einer einzigen, ununterbrochenen Sitzung
 wiederholt werden; das war im Rahmen dieser Arbeit zeitlich nicht mehr möglich.
@@ -554,7 +555,7 @@ insgesamt weniger Arbeit erledigt, nicht mehr, obwohl jeder einzelne Thread glei
 Ein technischer Hinweis zu den Strouhal-Werten in den Rohdaten dieses Laufs: Sie sind bei den
 meisten Thread-Zahlen unrealistisch hoch (z. B. 5.5 statt der erwarteten ~0.2). Das ist kein
 Physik-Fehler, sondern folgt direkt aus einer im Projekt-README genannten Einschränkung: Die
-Schrittzahl (2000) wurde hier bewusst fix gehalten, um nur die Gittergrösse zu variieren — bei den
+Schrittzahl (2000) habe ich hier bewusst fix gehalten, um nur die Gittergrösse zu variieren — bei den
 grösseren Gittern reicht das nicht mehr für genug abgeschlossene Wirbelablöse-Perioden, um eine
 sinnvolle Frequenz zu berechnen. Die eigentliche Physik-Validierung für den `cylinder`-Fall steht
 bereits in Abschnitt 6 (dort mit ausreichend Schritten); dieser Lauf hier dient rein der
@@ -577,9 +578,9 @@ scheinbar unauffälliger Wert (die erreichte Bandbreite auf `medium`, Abschnitt 
 `pub030` als geteilter Cluster-Knoten je nach Tageszeit spürbar unterschiedliche Bandbreite zur
 Verfügung stellt (Abschnitt 7.3, 7.4, 8.1), was auch erklärt, warum eine einzelne, isoliert
 gemessene Zahl auf diesem System nie ganz ohne Vorbehalt stehen sollte. Diese Auslastungsschwankung
-wurde erst spät entdeckt, entsprechend spät im Projekt, um sie auch für die fünf Optimierungsschritte
-in Abschnitt 4 systematisch gegenzuprüfen — auch diese Cluster-Zahlen wurden an unterschiedlichen
-Tagen gemessen und wurden nicht nochmals wiederholt. Die grossen, klar erkennbaren Effekte dort
+habe ich erst spät entdeckt, entsprechend spät im Projekt, um sie auch für die fünf Optimierungsschritte
+in Abschnitt 4 systematisch gegenzuprüfen — auch diese Cluster-Zahlen habe ich an unterschiedlichen
+Tagen gemessen und nicht nochmals wiederholt. Die grossen, klar erkennbaren Effekte dort
 (z. B. der Sprung auf 8.49× / 2.76× in Schritt 5) sind davon vermutlich nicht betroffen, da Effekte
 dieser Grössenordnung eine Auslastungsschwankung von 20–30% klar überstehen; einzelne
 Zwischenschritte mit kleineren, knapperen Unterschieden (z. B. Schritt 1 auf dem Cluster, 0.85×)
@@ -595,13 +596,13 @@ bereits erreichte Speedup (8.49× / 2.76×) ist bereits sehr deutlich, und Roofl
 sowie Ghia-Validierung gehören genauso zur Bewertung wie die reine Optimierung — diesen Teilen
 sauber Raum zu geben war mir wichtiger, als noch einen fünften Optimierungsschritt draufzusetzen.
 
-**Kernaussage:** Die Roofline-Analyse (AI ≈ 0.32 FLOP/Byte) zeigt, dass unser Löser
+**Kernaussage:** Die Roofline-Analyse (AI ≈ 0.32 FLOP/Byte) zeigt, dass mein Löser
 speicherbandbreiten-limitiert ist, nicht rechenlimitiert — bei einem solchen Algorithmus ist
 weniger Speicherverkehr der wirksamere Hebel als reine Rechengeschwindigkeit, und genau das liefert
 Numba: Der Scalar-Loop vermeidet die NumPy-Temporärarrays und kommt für `equilibrium()` nachweislich
 mit einem Zwanzigstel des Speicherverkehrs der Baseline aus (Abschnitt 4.7). Dass dieser Effekt den
 grössten Teil des gemessenen Speedups erklärt, ist naheliegend und durch die Roofline-Zahlen gut
 gestützt — sauber isoliert (z. B. durch separates Messen, wie viel allein reduzierter
-Interpreter- und Allokations-Overhead beiträgt) wurde dieser Anteil in dieser Arbeit aber nicht.
+Interpreter- und Allokations-Overhead beiträgt) habe ich diesen Anteil in dieser Arbeit aber nicht.
 Roofline-Analyse und Scaling-Studie bestätigen unabhängig voneinander, dass die Speicherbandbreite
 und nicht die Kernzahl die Grenze setzt.
